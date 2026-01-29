@@ -20,5 +20,11 @@ dist-ssr
 *.suo
 *.ntvs*
 *.njsproj
-*.sln
 *.sw?
+
+# Database files
+library.db
+library.db-wal
+library.db-shm
+taxonomy.json
+
