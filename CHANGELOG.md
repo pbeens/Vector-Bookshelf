@@ -5,6 +5,20 @@ All notable changes to Vector Bookshelf will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-01-29
+
+### Fixed
+
+- **Failed AI Scans**: Books are no longer incorrectly marked as "scanned" when AI processing fails (e.g., LM Studio not running)
+  - Added `/api/books/reset-failed-scans` endpoint to recover from this state
+  - Run `fetch('http://localhost:3001/api/books/reset-failed-scans', { method: 'POST' })` in browser console to fix existing issues
+
+### Changed
+
+- Database files (`library.db`, `taxonomy.json`) are now excluded from version control via `.gitignore`
+
+---
+
 ## [0.5.0] - 2026-01-29
 
 ### Added
@@ -32,6 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Author names in "Last, First" format no longer split into two separate authors
 - Tag matching now works regardless of spacing or hyphenation differences
 - Eliminated duplicate "Fiction"/"Non-Fiction" appearing as both tags and categories
+- **Failed AI Scans**: Books are no longer incorrectly marked as "scanned" when AI processing fails (e.g., LM Studio not running)
+  - Added `/api/books/reset-failed-scans` endpoint to recover from this state
 
 ### Technical
 
@@ -40,6 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved `computeMasterTags()` with normalized tag matching
 - Updated AI prompts to focus on specific genres and topics only
 - Enhanced `parseAuthors()` with pattern detection for reversed names
+- Added `/api/books/reset-failed-scans` endpoint to reset books with failed AI processing
 
 ---
 

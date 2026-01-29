@@ -379,6 +379,24 @@ app.post('/api/books/process-content', async (req, res) => {
     } catch (e) { }
 });
 
+// Reset failed AI scans (books marked as scanned but have no tags)
+app.post('/api/books/reset-failed-scans', (req, res) => {
+    try {
+        const stmt = database.prepare(`
+            UPDATE books 
+            SET content_scanned = 0 
+            WHERE (tags IS NULL OR tags = '') AND metadata_scanned = 1
+        `);
+        const result = stmt.run();
+        console.log(`[ResetScans] Reset ${result.changes} books`);
+        res.json({ success: true, count: result.changes });
+    } catch (err) {
+        console.error('[ResetScans] Error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
 app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
 });
