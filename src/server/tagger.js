@@ -6,8 +6,8 @@ const require = createRequire(import.meta.url);
 const { EPub } = require('epub2');
 const { PDFParse } = require('pdf-parse');
 
-const LM_STUDIO_URL = 'http://100.64.219.180:1234/v1/chat/completions';
-const MAX_CONTENT_CHARS = 5000;
+const LM_STUDIO_URL = 'http://localhost:1234/v1/chat/completions';
+const MAX_CONTENT_CHARS = 5000; // Requires ~6K context window in LM Studio (adjust if using smaller models)
 
 const SYSTEM_PROMPT = `
 You are a professional librarian and book classifier.
@@ -43,16 +43,22 @@ function normalizeTag(tag) {
  */
 async function extractContentText(filepath) {
     const ext = path.extname(filepath).toLowerCase();
+    console.log(`[Tagger] Extracting text from ${path.basename(filepath)} (${ext})...`);
     
     if (ext === '.epub') {
         try {
-            const epub = await EPub.createAsync(filepath);
+            // EPub.createAsync might throw synchronously or return rejected promise
+            // We wrap it to be safe
+            const epub = await EPub.createAsync(filepath).catch(err => { throw err; });
+            
             let fullText = '';
             // Get first few "chapters" (usually includes intro/preface)
             for (let i = 0; i < Math.min(epub.flow.length, 5); i++) {
-                const chapter = await epub.getChapterRawAsync(epub.flow[i].id);
+                const chapter = await epub.getChapterRawAsync(epub.flow[i].id).catch(e => '');
                 // Simple HTML tag removal
-                fullText += chapter.replace(/<[^>]*>?/gm, ' ') + ' ';
+                if (chapter) {
+                    fullText += chapter.replace(/<[^>]*>?/gm, ' ') + ' ';
+                }
                 if (fullText.length > MAX_CONTENT_CHARS) break;
             }
             return fullText.substring(0, MAX_CONTENT_CHARS);
@@ -80,6 +86,18 @@ async function extractContentText(filepath) {
  */
 async function getTagsFromAI(text) {
     try {
+
+        if (text) {
+             console.log(`[Tagger] Text Preview: ${text.substring(0, 50).replace(/\n/g, ' ')}...`);
+        }
+
+        console.error(`[Tagger] Calling LM Studio at ${LM_STUDIO_URL}...`);
+        
+        // Create abort controller for timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout for debugging
+        
+        console.error(`[Tagger] Fetching...`);
         const response = await fetch(LM_STUDIO_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -90,16 +108,24 @@ async function getTagsFromAI(text) {
                     { role: "user", content: `Here is the book content:\n\n${text}` }
                 ],
                 temperature: 0.3
-            })
+            }),
+            signal: controller.signal
         });
+        
+        clearTimeout(timeoutId);
+        console.error(`[Tagger] Fetch complete. Status: ${response.status}`);
 
         if (!response.ok) {
             const errorText = await response.text();
             throw new Error(`LM Studio Error ${response.status}: ${errorText}`);
         }
 
+        console.error(`[Tagger] Parsing JSON response...`);
         const data = await response.json();
+        console.error(`[Tagger] JSON parsed. Extracting content...`);
         const content = data.choices[0].message.content;
+        
+        console.error(`[Tagger] AI Response received (Length: ${content.length})`);
         
         // Try to parse JSON from response
         try {
@@ -111,7 +137,11 @@ async function getTagsFromAI(text) {
             return null;
         }
     } catch (err) {
-        console.error("[Tagger] AI Service Error:", err.message);
+        if (err.name === 'AbortError') {
+            console.error("[Tagger] AI Service Timeout: Request took longer than 3 mins");
+        } else {
+            console.error("[Tagger] AI Service Error:", err.message);
+        }
         return null;
     }
 }

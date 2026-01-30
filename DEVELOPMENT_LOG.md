@@ -21,6 +21,34 @@
 
 ---
 
+## 2026-01-29 - v0.5.1: Robustness & AI Integration Fixes
+
+### Critical Fixes
+
+1. **Dual Status Indicators**
+    - Added distinct indicators for "System Online" (Backend) and "AI Server Online" (LM Studio).
+    - Backend now independently checks `http://localhost:1234/v1/models` and reports status.
+    - **Benefit:** Users can instantly see if the AI server is down without guessing why scans fail.
+
+2. **"Poison Pill" Crash Protection**
+    - Identified that corrupted EPUB files could crash the Node.js process via `uncaughtException` in library code.
+    - Implemented a "Crash Handler" that catches these specific errors, **marks the file as 'Error' in the database**, and prevents infinite loops.
+    - Added robust `try/catch` wrappers around `epub2` extraction logic.
+
+3. **Cross-Origin Connection Fixes**
+    - Switched absolute fetch URLs (`http://localhost:3001/...`) to relative paths (`/api/...`) in `App.jsx`.
+    - Ensures all traffic routes correctly through the Vite proxy, resolving "stuck" scans caused by invisible CORS/Network blocks.
+
+4. **Performance Optimization**
+    - **Dynamic Polling:** Frontend now checks server health every **15 seconds** during active scans (vs 2s normally) to reduce CPU/Network contention.
+    - **Silenced Logs:** Removed spammy `[HealthCheck]` logs from the terminal to make actual scan progress visible.
+
+5. **UI Enhancements**
+    - Added a **"Force Stop"** button (Red X) to the AI Scan interface to reset stuck UI states.
+    - Fixed "0/0 Books" bug caused by incorrect SQL string quoting (`""` vs `''`).
+
+---
+
 ## 2026-01-29 - Feature Complete: Adaptive AI & Power Tools
 
 ### New Features

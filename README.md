@@ -69,6 +69,9 @@ The project includes built-in automation to help with testing, cleanup, and docu
     - Ensure LM Studio is running
     - Start the "Local Server" on port `1234`
     - Load an appropriate model for your GPU
+    - **Set context window to at least 6144 tokens** (Settings → Context Length)
+      - The AI scan sends ~5000 characters + system prompt
+      - If you get "cannot truncate prompt" errors, increase context window or reduce `MAX_CONTENT_CHARS` in `src/server/tagger.js`
 
     **Model Recommendations by GPU Memory:**
 

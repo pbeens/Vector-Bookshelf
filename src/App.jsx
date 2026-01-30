@@ -28,9 +28,59 @@ function App() {
   const [syncingMetadataId, setSyncingMetadataId] = useState(null)
   const [editingCell, setEditingCell] = useState(null) // { id: 1, field: 'title' }
   const [isSyncingTaxonomy, setIsSyncingTaxonomy] = useState(false)
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1)
+  const [itemsPerPage, setItemsPerPage] = useState(500)
   const [exportPath, setExportPath] = useState('')
   const [isExporting, setIsExporting] = useState(false)
   const [taxonomyStats, setTaxonomyStats] = useState({ state: 'idle', current: 0, total: 0, message: '' })
+  const [isBackendOnline, setIsBackendOnline] = useState(false)
+  const [isAiOnline, setIsAiOnline] = useState(false)
+
+  // Poll server status
+  useEffect(() => {
+    const checkHealth = async () => {
+      try {
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 1000) // 1s timeout
+
+        const res = await fetch(`/api/health?t=${Date.now()}`, { signal: controller.signal })
+        clearTimeout(timeoutId)
+
+        if (res.ok) {
+          try {
+            const data = await res.json()
+            if (data.status === 'ok') {
+              setIsBackendOnline(true)
+              setIsAiOnline(data.ai === true)
+            } else {
+              setIsBackendOnline(false)
+              setIsAiOnline(false)
+            }
+          } catch (jsonErr) {
+            setIsBackendOnline(false)
+            setIsAiOnline(false)
+          }
+        } else {
+          setIsBackendOnline(false)
+          setIsAiOnline(false)
+        }
+      } catch (e) {
+        setIsBackendOnline(false)
+        setIsAiOnline(false)
+      }
+    }
+
+    checkHealth() // Initial check
+
+    // If we are actively scanning/processing, ping LESS often to save resources (15s)
+    // Otherwise, ping frequently to show responsiveness (2s)
+    const pollInterval = (isScanning || isProcessingContent || isSyncingTaxonomy) ? 15000 : 2000;
+
+    const interval = setInterval(checkHealth, pollInterval)
+    return () => clearInterval(interval)
+  }, [isScanning, isProcessingContent, isSyncingTaxonomy])
 
   const fetchBooks = async () => {
     try {
@@ -52,7 +102,7 @@ function App() {
     setStats({ found: 0, added: 0, skipped: 0, currentFile: 'Starting...' })
 
     try {
-      const response = await fetch('http://localhost:3001/api/scan', {
+      const response = await fetch('/api/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path })
@@ -98,7 +148,7 @@ function App() {
   const startTagGeneration = async () => {
     setIsProcessingContent(true)
     try {
-      const response = await fetch('http://localhost:3001/api/books/process-content', {
+      const response = await fetch('/api/books/process-content', {
         method: 'POST'
       })
 
@@ -186,7 +236,7 @@ function App() {
     setTaxonomyStats({ state: 'starting', current: 0, total: 0, message: 'Starting...' })
 
     try {
-      const response = await fetch('http://localhost:3001/api/scan-master-tags', {
+      const response = await fetch('/api/scan-master-tags', {
         method: 'POST'
       })
 
@@ -377,6 +427,17 @@ function App() {
     return matchesTags && matchesAuthors
   })
 
+  // Pagination calculations
+  const totalPages = Math.ceil(filteredBooks.length / itemsPerPage)
+  const startIndex = (currentPage - 1) * itemsPerPage
+  const endIndex = startIndex + itemsPerPage
+  const paginatedBooks = filteredBooks.slice(startIndex, endIndex)
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [activeTagFilters, activeAuthorFilters])
+
   // Auto-collapse scan section after successful scan
   useEffect(() => {
     if (!isScanning && stats.added > 0 && books.length > 0) {
@@ -386,8 +447,27 @@ function App() {
   }, [isScanning, stats.added, books.length])
 
   return (
-    <div className="min-h-screen bg-background text-neutral-100 font-sans selection:bg-primary/30">
+    <div className="min-h-screen bg-background text-neutral-100 font-sans selection:bg-primary/30 relative">
       <div className="max-w-7xl mx-auto px-6 py-12">
+        {/* Server Status Indicators */}
+        <div className="absolute top-6 right-6 flex flex-col gap-2 z-50">
+          {/* Backend Status */}
+          <div className="flex items-center gap-2 bg-black/40 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10 shadow-lg transition-all duration-300 hover:bg-black/60">
+            <div className={`w-2 h-2 rounded-full transition-all duration-500 ${isBackendOnline ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)] animate-pulse'}`} />
+            <span className={`text-xs font-medium transition-colors duration-300 ${isBackendOnline ? 'text-emerald-400/80' : 'text-red-400/80'}`}>
+              {isBackendOnline ? 'System Online' : 'System Offline'}
+            </span>
+          </div>
+
+          {/* AI Server Status */}
+          <div className="flex items-center gap-2 bg-black/40 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10 shadow-lg transition-all duration-300 hover:bg-black/60">
+            <div className={`w-2 h-2 rounded-full transition-all duration-500 ${isAiOnline ? 'bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.6)]' : 'bg-neutral-600'}`} />
+            <span className={`text-xs font-medium transition-colors duration-300 ${isAiOnline ? 'text-indigo-400/80' : 'text-neutral-500'}`}>
+              {isAiOnline ? 'AI Model Ready' : 'AI Offline'}
+            </span>
+          </div>
+        </div>
+
         <header className="mb-12 text-center space-y-4">
           <h1 className="text-4xl font-extrabold tracking-tight bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">
             Vector Bookshelf
@@ -494,13 +574,26 @@ function App() {
                   Library ({filteredBooks.length}{(activeTagFilters.length > 0 || activeAuthorFilters.length > 0) && ` of ${books.length}`})
                 </h2>
                 <div className="flex gap-2">
-                  <button
-                    onClick={startTagGeneration}
-                    disabled={isProcessingMetadata || isProcessingContent || isSyncingTaxonomy || books.length === 0}
-                    className={`px-6 py-2 rounded-lg font-medium border border-cyan-500/20 bg-cyan-950/20 text-cyan-400 hover:bg-cyan-500/10 ${isProcessingContent ? 'bg-neutral-800' : ''}`}
-                  >
-                    {isProcessingContent ? `AI Data Scan: ${taggingStats.processed}/${taggingStats.total}` : 'AI Data Scan'}
-                  </button>
+                  <div className="flex gap-2 items-center">
+                    <button
+                      onClick={startTagGeneration}
+                      disabled={isProcessingMetadata || isProcessingContent || isSyncingTaxonomy || books.length === 0}
+                      className={`px-6 py-2 rounded-lg font-medium border border-cyan-500/20 bg-cyan-950/20 text-cyan-400 hover:bg-cyan-500/10 ${isProcessingContent ? 'bg-neutral-800' : ''}`}
+                    >
+                      {isProcessingContent ? `AI Data Scan: ${taggingStats.processed}/${taggingStats.total}` : 'AI Data Scan'}
+                    </button>
+                    {isProcessingContent && (
+                      <button
+                        onClick={() => setIsProcessingContent(false)}
+                        className="p-2 rounded-lg border border-red-500/20 bg-red-950/20 text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors"
+                        title="Force Stop (Reset UI)"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
                   <button
                     onClick={handleSyncTaxonomy}
                     disabled={isProcessingMetadata || isProcessingContent || isSyncingTaxonomy || books.length === 0}
@@ -598,7 +691,7 @@ function App() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
-                {filteredBooks.map((book) => (
+                {paginatedBooks.map((book) => (
                   <tr
                     key={book.id}
                     className="hover:bg-white/5 transition-colors"
@@ -839,6 +932,45 @@ function App() {
                 )}
               </tbody>
             </table>
+
+            {/* Pagination Controls */}
+            {totalPages > 1 && (
+              <div className="mt-4 flex items-center justify-between px-4 py-3 bg-white/5 rounded-lg">
+                <div className="flex items-center gap-4">
+                  <span className="text-sm text-secondary">
+                    Showing {startIndex + 1}-{Math.min(endIndex, filteredBooks.length)} of {filteredBooks.length} books
+                  </span>
+                  <select
+                    value={itemsPerPage}
+                    onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }}
+                    className="px-3 py-1 bg-white/10 border border-white/20 rounded text-sm text-white"
+                  >
+                    <option value={100}>100 per page</option>
+                    <option value={500}>500 per page</option>
+                    <option value={1000}>1000 per page</option>
+                  </select>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    className="px-4 py-2 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded text-sm font-medium"
+                  >
+                    Previous
+                  </button>
+                  <span className="text-sm text-secondary">
+                    Page {currentPage} of {totalPages}
+                  </span>
+                  <button
+                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages}
+                    className="px-4 py-2 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded text-sm font-medium"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </main>
       </div >

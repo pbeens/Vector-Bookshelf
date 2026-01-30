@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.5.1] - 2026-01-29
 
+### Added
+
+- **Pagination**: Library now displays books in pages (100/500/1000 per page) for better performance with large libraries
+  - Supports 30K+ books without performance degradation
+  - Previous/Next navigation buttons
+  - Page indicator showing current page and total pages
+  - Configurable items-per-page selector
+
 ### Fixed
 
 - **Failed AI Scans**: Books are no longer incorrectly marked as "scanned" when AI processing fails (e.g., LM Studio not running)
@@ -16,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Database files (`library.db`, `taxonomy.json`) are now excluded from version control via `.gitignore`
+- Added debug endpoint `/api/debug/count` for troubleshooting database issues
+- Frontend now uses pagination to render books in chunks instead of all at once
 
 ---
 

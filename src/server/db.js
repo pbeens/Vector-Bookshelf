@@ -169,8 +169,17 @@ export function getBooksNeedingMetadata() {
     return db.prepare('SELECT filepath FROM books WHERE metadata_scanned = 0').all();
 }
 
-export function getBooksNeedingContent() {
-    return db.prepare('SELECT filepath, title FROM books WHERE content_scanned = 0 AND metadata_scanned = 1').all();
+export function getBooksNeedingContent(limit = 50) {
+    // Include books that either:
+    // 1. Haven't been scanned yet (content_scanned = 0)
+    // 2. Were scanned but have no tags (failed scan)
+    return db.prepare(`
+        SELECT filepath, title 
+        FROM books 
+        WHERE metadata_scanned = 1 
+        AND (content_scanned = 0 OR tags IS NULL OR tags = '')
+        LIMIT ?
+    `).all(limit);
 }
 
 export default db;

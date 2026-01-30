@@ -4,7 +4,7 @@ import { getAllBooks, updateMasterTags, updateBookTags, runTransaction } from '.
 
 const TAXONOMY_FILE = path.resolve('taxonomy.json');
 
-const LM_STUDIO_URL = 'http://100.64.219.180:1234/v1/chat/completions';
+const LM_STUDIO_URL = 'http://localhost:1234/v1/chat/completions';
 
 /**
  * Gets all unique non-master tags from the database

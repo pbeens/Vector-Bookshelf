@@ -3,7 +3,7 @@ import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import { exec } from 'child_process';
-import { initDB, getAllBooks, getBooksNeedingMetadata, updateBookMetadata, getBooksNeedingContent, updateBookContent, updateMasterTags, updateBookManualMetadata } from './db.js';
+import { initDB, getAllBooks, getBooksNeedingMetadata, updateBookMetadata, getBooksNeedingContent, updateBookContent, updateMasterTags, updateBookManualMetadata, database } from './db.js';
 import { scanDirectory } from './scanner.js';
 import { extractMetadata } from './metadata.js';
 import { processBookContent } from './tagger.js';
@@ -24,33 +24,84 @@ let currentProcessingFile = null;
 // ... (rest of the listeners and endpoints follow)
 
 // Prevent server crash on bad books
+// Prevent server crash on bad books
 process.on('uncaughtException', (err) => {
     console.error('CRITICAL: Uncaught Exception:', err);
     if (currentProcessingFile) {
         console.error('Failed on file:', currentProcessingFile);
-        // Could mark it as bad in DB here?
-        // But simply logging allows us to continue if we restart or ignores it?
-        // Actually, if we are in the loop, the loop stack is gone. Server state might be corrupted.
-        // But for this simple app, preventing exit is key.
+        try {
+            // Mark as failed so we don't retry it infinitely
+            updateBookContent(currentProcessingFile, { tags: 'Error: Crashed Server', summary: `Crash: ${err.message}` });
+            console.log('Marked file as error in DB.');
+        } catch (dbErr) {
+            console.error('Failed to mark bad file in DB:', dbErr);
+        }
     }
-    // Don't exit
+    // We ideally should exit, but user wants to try to keep going
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-    console.error('CRITICAL: Unhandled Rejection at:', promise, 'reason:', reason);
+    console.error('CRITICAL: Unhandled Rejection:', reason);
     if (currentProcessingFile) {
         console.error('Failed on file:', currentProcessingFile);
+        try {
+             updateBookContent(currentProcessingFile, { tags: 'Error: Promise Rejection', summary: `Rejection: ${reason}` });
+        } catch (e) {}
     }
+});
+
+// Health check
+// Health check (Checks both Backend & AI Server)
+app.get('/api/health', async (req, res) => {
+    let aiStatus = false;
+    let aiError = null;
+
+    try {
+        // Check if LM Studio is running
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 1000); // 1s timeout
+        
+        const aiRes = await fetch('http://localhost:1234/v1/models', { signal: controller.signal });
+        clearTimeout(timeoutId);
+        
+        if (aiRes.ok) {
+            aiStatus = true;
+            // console.log(`[HealthCheck] AI Server Online (LM Studio)`); // Too noisy
+        }
+    } catch (e) {
+        aiError = e.message;
+    }
+
+    // Always return 200 if backend is up, but include AI status in body
+    res.json({ 
+        status: 'ok', 
+        timestamp: Date.now(), 
+        backend: true, 
+        ai: aiStatus,
+        ai_error: aiError
+    });
 });
 
 // Get all books
 app.get('/api/books', (req, res) => {
   try {
     const books = getAllBooks();
+    console.log(`[API /api/books] Returning ${books.length} books to frontend`);
     res.json(books);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+});
+
+// Debug endpoint
+app.get('/api/debug/count', (req, res) => {
+  const books = getAllBooks();
+  const count = database.prepare('SELECT COUNT(*) as count FROM books').get();
+  res.json({ 
+    getAllBooksCount: books.length,
+    directCount: count.count,
+    sample: books.slice(0, 3).map(b => ({ filepath: b.filepath, title: b.title }))
+  });
 });
 
 // Process a Single Book Metadata on Demand
@@ -317,56 +368,76 @@ app.post('/api/books/process-metadata', async (req, res) => {
 
 // Process Content/Tags (Phase 3)
 app.post('/api/books/process-content', async (req, res) => {
+    console.log('[API] /api/books/process-content HIT');
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
-    const books = getBooksNeedingContent();
-    const total = books.length;
-    let processed = 0;
+    // Get total count first for progress bar
+    const allBooks = database.prepare("SELECT COUNT(*) as count FROM books WHERE metadata_scanned = 1 AND (content_scanned = 0 OR tags IS NULL OR tags = '')").get();
+    const totalToProcess = allBooks.count;
+    let processedTotal = 0;
     
-    console.log(`[TaggerJob] Starting batch for ${total} books`);
+    console.log(`[TaggerJob] Starting processing for ~${totalToProcess} total books in batches`);
 
     try {
-        res.write(`data: ${JSON.stringify({ type: 'start', total })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: 'start', total: totalToProcess })}\n\n`);
     } catch (e) {
         console.error('[TaggerJob] Failed to write start', e);
     }
 
-    for (const book of books) {
-        currentProcessingFile = book.filepath;
-        const basename = path.basename(book.filepath);
-        try {
-            const contentData = await processBookContent(book.filepath);
-            
-            if (contentData) {
-                console.log(`[TaggerJob] Success: ${basename} -> Tags: ${contentData.tags}`);
-                updateBookContent(book.filepath, contentData);
-                
-                // Auto-apply Master Tags
-                const masterTags = computeMasterTags(contentData.tags);
-                if (masterTags) {
-                    updateMasterTags(book.filepath, masterTags);
-                }
-            } else {
-                console.warn(`[TaggerJob] No content data generated for: ${basename}`);
-                updateBookContent(book.filepath, { tags: '', summary: '' });
-            }
-            
-            processed++;
-            
-            try {
-                res.write(`data: ${JSON.stringify({ 
-                    type: 'progress', 
-                    processed, 
-                    total, 
-                    current: basename,
-                    tags: contentData ? contentData.tags : ''
-                })}\n\n`);
-            } catch (writeErr) { }
+    const BATCH_SIZE = 50;
+    let keepGoing = true;
 
-        } catch (e) {
-            console.error(`[TaggerJob] Error processing ${basename}:`, e);
+    while (keepGoing) {
+        // Get next batch
+        const books = getBooksNeedingContent(BATCH_SIZE);
+        
+        if (books.length === 0) {
+            break;
+        }
+        
+        console.log(`[TaggerJob] Processing batch of ${books.length} books`);
+
+        for (const book of books) {
+            currentProcessingFile = book.filepath;
+            const basename = path.basename(book.filepath);
+            console.log(`[TaggerJob] >>> Starting: ${basename} (Book ${processedTotal + 1}/${totalToProcess})`);
+            try {
+                const contentData = await processBookContent(book.filepath);
+                
+                if (contentData) {
+                    console.log(`[TaggerJob] Success: ${basename} -> Tags: ${contentData.tags}`);
+                    updateBookContent(book.filepath, contentData);
+                    
+                    // Auto-apply Master Tags
+                    const masterTags = computeMasterTags(contentData.tags);
+                    if (masterTags) {
+                        updateMasterTags(book.filepath, masterTags);
+                    }
+                } else {
+                    console.warn(`[TaggerJob] No content data generated for: ${basename}`);
+                    updateBookContent(book.filepath, { tags: '', summary: '' });
+                }
+                
+                processedTotal++;
+                
+                try {
+                    res.write(`data: ${JSON.stringify({ 
+                        type: 'progress', 
+                        processed: processedTotal, 
+                        total: totalToProcess, 
+                        current: basename,
+                        tags: contentData ? contentData.tags : ''
+                    })}\n\n`);
+                } catch (writeErr) { }
+
+            } catch (e) {
+                console.error(`[TaggerJob] Error processing ${basename}:`, e);
+                // Mark as failed with explicit tag to prevent infinite loop
+                updateBookContent(book.filepath, { tags: 'Error: Scan Failed', summary: `Failed to process: ${e.message}` });
+                processedTotal++;
+            }
         }
     }
     
