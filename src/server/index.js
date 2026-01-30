@@ -94,11 +94,20 @@ app.get('/api/health', async (req, res) => {
     });
 });
 
-// Get all books
+// Get all books (with search)
 app.get('/api/books', (req, res) => {
   try {
-    const books = getAllBooks();
-    console.log(`[API /api/books] Returning ${books.length} books to frontend`);
+    const { q, year_start, year_end } = req.query;
+    
+    // Convert empty strings to undefined/null
+    const search = q || '';
+    const filters = {
+        yearStart: year_start ? parseInt(year_start) : null,
+        yearEnd: year_end ? parseInt(year_end) : null
+    };
+
+    const books = getAllBooks(search, filters);
+    console.log(`[API] Returning ${books.length} books (Search: "${search}", Years: ${filters.yearStart}-${filters.yearEnd})`);
     res.json(books);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -480,6 +489,16 @@ app.post('/api/books/process-content', async (req, res) => {
 });
 
 // Export Errors to File
+app.post('/api/scan/stop', (req, res) => {
+    if (scanState.active) {
+        scanState.active = false; // This breaks the loop
+        console.log('[API] Stop requested. Stopping scan loop...');
+        res.json({ success: true, message: 'Scan stopping...' });
+    } else {
+        res.json({ success: false, message: 'No scan active' });
+    }
+});
+
 app.post('/api/books/export-errors', async (req, res) => {
     try {
         const errors = database.prepare(`

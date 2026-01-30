@@ -281,6 +281,12 @@ const filteredBooks = books.filter(book => {
 - Contextual action bar appears when items selected
 - Batch operations on selection
 
+### 3.4 Duplicate Grouping
+
+- Detect same book in multiple formats (PDF, EPUB)
+- Group into single row with format badges
+- "View Files" dropdown to select specific version
+
 ---
 
 ## Design Principles

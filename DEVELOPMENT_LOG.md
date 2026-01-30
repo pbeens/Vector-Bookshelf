@@ -77,6 +77,28 @@
 
 ---
 
+## 2026-01-30 - v0.5.3: Search, Filtering & Robustness
+
+### New Features
+
+1. **Search & Filter System**
+    - **Objective:** Allow users to find specific content in large libraries (32K+ books).
+    - **Implementation:**
+        - **Backend:** Updated `getAllBooks` to accept `search` and `year` params. Dynamic SQL construction using `LIKE` operators.
+        - **Frontend:** Added Sticky Header with Search Input. Implemented **Debouncing** (500ms) to prevent API spam.
+        - **Pagination:** Search results are fully paginated on the server side to maintain performance.
+
+2. **Force Stop (Backend Implementation)**
+    - **Issue:** The previous "Stop" button only hid the UI element; the server kept scanning endlessly.
+    - **Fix:** Implemented `POST /api/scan/stop` endpoint that sets a global `scanState.active = false` flag, breaking the async loop immediately.
+
+### Documentation Cleanup
+
+- **Calibre References:** Removed mentions of Calibre from `gemini.md` to reinforce that Vector Bookshelf is a standalone, file-first system.
+- **Future Roadmap:** Added task for "Duplicate Grouping" (merging PDF/EPUB versions).
+
+---
+
 ## 2026-01-30 - v0.5.2: Error Reporting & Stability Hardening
 
 ### New Features

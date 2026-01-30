@@ -45,6 +45,24 @@ function App() {
     }
   })
 
+  // Search State
+  const [searchQuery, setSearchQuery] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+
+  // Debounce Search
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery)
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [searchQuery])
+
+  // Fetch on Debounce Change
+  useEffect(() => {
+    setCurrentPage(1)
+    fetchBooks()
+  }, [debouncedSearch])
+
   // Poll server status
   useEffect(() => {
     const checkHealth = async () => {
@@ -134,7 +152,10 @@ function App() {
 
   const fetchBooks = async () => {
     try {
-      const res = await fetch('/api/books')
+      const query = new URLSearchParams()
+      if (debouncedSearch) query.append('q', debouncedSearch)
+
+      const res = await fetch(`/api/books?${query.toString()}`)
       const data = await res.json()
       setBooks(data)
     } catch (e) {
@@ -477,6 +498,30 @@ function App() {
     return matchesTags && matchesAuthors
   })
 
+
+  // Error Reporting Logic
+  const errorBooks = books.filter(b => b.tags && (b.tags.includes('Error:') || b.tags.includes('Skipped:')))
+  const newErrorBooks = errorBooks.filter(b => !dismissedErrorPaths.includes(b.filepath))
+
+  const handleExportErrors = async () => {
+    if (newErrorBooks.length === 0) return;
+    if (!confirm('Generate a report of all failed/skipped books?')) return;
+    try {
+      const res = await fetch('/api/books/export-errors', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        alert(`Report generated!\n\nFound: ${data.count} issues\nSaved to: SCAN_ERRORS.txt`);
+        const allPaths = errorBooks.map(b => b.filepath);
+        setDismissedErrorPaths(allPaths);
+        localStorage.setItem('dismissedErrorPaths', JSON.stringify(allPaths));
+      } else {
+        alert('Failed to generate report.');
+      }
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+  }
+
   // Pagination calculations
   const totalPages = Math.ceil(filteredBooks.length / itemsPerPage)
   const startIndex = (currentPage - 1) * itemsPerPage
@@ -617,12 +662,17 @@ function App() {
 
 
           {/* Sticky Library Header with Filters */}
-          <div className="sticky top-0 z-10 bg-background pb-4">
-            <div className="flex flex-col gap-3">
+          <div className="sticky top-0 z-10 bg-background pb-4 shadow-xl shadow-background/50 pt-2">
+            <div className="flex flex-col gap-4 bg-surface/50 backdrop-blur-md p-4 rounded-xl border border-white/5">
+
               <div className="flex items-center justify-between">
-                <h2 className="text-2xl font-bold">
-                  Library ({filteredBooks.length}{(activeTagFilters.length > 0 || activeAuthorFilters.length > 0) && ` of ${books.length}`})
+                <h2 className="text-2xl font-bold flex items-center gap-3">
+                  Library
+                  <span className="text-sm font-normal text-secondary bg-black/30 px-3 py-0.5 rounded-full border border-white/5">
+                    {searchQuery ? `${books.length} results` : `${books.length} books`}
+                  </span>
                 </h2>
+
                 <div className="flex gap-2">
                   <div className="flex gap-2 items-center">
                     <button
@@ -634,9 +684,23 @@ function App() {
                     </button>
                     {isProcessingContent && (
                       <button
-                        onClick={() => setIsProcessingContent(false)}
+                        onClick={async () => {
+                          try {
+                            const res = await fetch('/api/scan/stop', { method: 'POST' });
+                            const data = await res.json();
+                            console.log('Stop requested:', data);
+                            if (data.success) {
+                              setIsProcessingContent(false);
+                            } else {
+                              alert('Stop failed: ' + data.message);
+                            }
+                          } catch (e) {
+                            console.error('Failed to stop scan:', e);
+                            alert('Failed to connect to server to stop scan.');
+                          }
+                        }}
                         className="p-2 rounded-lg border border-red-500/20 bg-red-950/20 text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors"
-                        title="Force Stop (Reset UI)"
+                        title="Force Stop (Cancel Server Scan)"
                       >
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -644,125 +708,124 @@ function App() {
                       </button>
                     )}
                   </div>
-                  <div className="flex gap-2">
+
+                  <button
+                    onClick={handleSyncTaxonomy}
+                    disabled={isSyncingTaxonomy || isScanning || isProcessingContent || books.length === 0}
+                    className={`relative px-4 py-2 rounded-lg font-medium border border-amber-500/20 bg-amber-950/20 text-amber-400 hover:bg-amber-500/10 ${isSyncingTaxonomy ? 'bg-neutral-800' : ''} ${!isSyncingTaxonomy && books.some(b => b.tags && !b.master_tags) ? 'animate-pulse ring-1 ring-amber-500' : ''}`}
+                    title="AI groups your tags into categories"
+                  >
+                    {isSyncingTaxonomy ? (taxonomyStats.message || 'Syncing...') : 'Rescan Categories'}
+                  </button>
+
+                  {newErrorBooks.length > 0 && (
                     <button
-                      onClick={handleSyncTaxonomy}
-                      disabled={isProcessingMetadata || isProcessingContent || isSyncingTaxonomy || books.length === 0}
-                      className={`relative px-6 py-2 rounded-lg font-medium border border-amber-500/20 bg-amber-950/20 text-amber-400 hover:bg-amber-500/10 ${isSyncingTaxonomy ? 'bg-neutral-800' : ''} ${books.some(b => b.tags && !b.master_tags) ? 'animate-pulse ring-1 ring-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.3)]' : ''}`}
-                      title="AI groups your tags into categories"
+                      onClick={handleExportErrors}
+                      className={`px-4 py-2 rounded-lg font-medium border transition-colors flex items-center gap-2 ${newErrorBooks.length > 0 ? 'border-red-500/50 bg-red-950/30 text-red-400 hover:bg-red-900/50 animate-pulse' : 'border-red-500/10 bg-red-950/5 text-red-500/50'}`}
+                      title={newErrorBooks.length > 0 ? "New errors found!" : "All errors dismissed"}
                     >
-                      {isSyncingTaxonomy
-                        ? (taxonomyStats.message || 'Syncing...')
-                        : 'Rescan Categories'}
-                      {!isSyncingTaxonomy && books.some(b => b.tags && !b.master_tags) && (
-                        <span className="absolute -top-1 -right-1 flex h-3 w-3">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-500"></span>
-                        </span>
-                      )}
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      Export Errors {newErrorBooks.length > 0 && `(${newErrorBooks.length})`}
                     </button>
-                    {(() => {
-                      const errorBooks = books.filter(b => b.tags && (b.tags.includes('Error:') || b.tags.includes('Skipped:')));
-                      const newErrorBooks = errorBooks.filter(b => !dismissedErrorPaths.includes(b.filepath));
-
-                      if (newErrorBooks.length === 0) return null;
-
-                      return (
-                        <button
-                          onClick={async () => {
-                            if (!confirm('Generate a report of all failed/skipped books?')) return;
-                            try {
-                              const res = await fetch('/api/books/export-errors', { method: 'POST' });
-                              const data = await res.json();
-                              if (data.success) {
-                                alert(`Report generated!\n\nFound: ${data.count} issues\nSaved to: SCAN_ERRORS.txt`);
-                                // Add ALL current error books to dismissed list
-                                const allPaths = errorBooks.map(b => b.filepath);
-                                setDismissedErrorPaths(allPaths);
-                                localStorage.setItem('dismissedErrorPaths', JSON.stringify(allPaths));
-                              } else {
-                                alert('Failed to generate report.');
-                              }
-                            } catch (e) {
-                              alert('Error: ' + e.message);
-                            }
-                          }}
-                          className="px-4 py-2 rounded-lg font-medium border border-red-500/20 bg-red-950/10 text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors"
-                          title="Export list of failed scans to text file"
-                        >
-                          Export Errors ({newErrorBooks.length} New)
-                        </button>
-                      );
-                    })()}
-                  </div>
+                  )}
                 </div>
               </div>
 
-              {/* Active Filter Chips */}
-              {(activeTagFilters.length > 0 || activeAuthorFilters.length > 0) && (
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm text-secondary">Filtered by:</span>
-
-                  {/* Tag Filters */}
-                  {activeTagFilters.map(tag => (
-                    <button
-                      key={`tag-${tag}`}
-                      onClick={() => removeTagFilter(tag)}
-                      className="px-3 py-1 bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full text-sm flex items-center gap-2 hover:bg-indigo-500/30 transition-colors"
-                    >
-                      {tag}
-                      <span className="text-indigo-400">×</span>
-                    </button>
-                  ))}
-
-                  {/* Author Filters */}
-                  {activeAuthorFilters.map(author => (
-                    <button
-                      key={`author-${author}`}
-                      onClick={() => removeAuthorFilter(author)}
-                      className="px-3 py-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full text-sm flex items-center gap-2 hover:bg-emerald-500/30 transition-colors"
-                    >
-                      <span className="text-[10px] uppercase opacity-70">Author:</span> {author}
-                      <span className="text-emerald-400">×</span>
-                    </button>
-                  ))}
-
+              {/* SEARCH BAR */}
+              <div className="relative">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search titles, authors, tags..."
+                  className="w-full bg-black/40 border border-white/10 rounded-lg pl-10 pr-4 py-3 text-neutral-200 placeholder:text-neutral-500 focus:ring-2 focus:ring-primary/50 outline-none transition-all"
+                />
+                <svg className="w-5 h-5 text-neutral-500 absolute left-3 top-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                {searchQuery && (
                   <button
-                    onClick={clearAllFilters}
-                    className="text-sm text-secondary hover:text-white underline"
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-3 top-3.5 text-neutral-500 hover:text-white"
                   >
-                    Clear all
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
                   </button>
-                </div>
-              )}
-
-              {/* Bulk Export Section */}
-              {(activeTagFilters.length > 0 || activeAuthorFilters.length > 0) && (
-                <div className="flex items-center gap-3 p-4 bg-indigo-500/5 border border-indigo-500/10 rounded-xl mt-2 animate-in fade-in slide-in-from-top-2 duration-300">
-                  <div className="text-secondary text-sm font-medium whitespace-nowrap">
-                    Export {filteredBooks.length} books to:
-                  </div>
-                  <input
-                    type="text"
-                    value={exportPath}
-                    onChange={(e) => setExportPath(e.target.value)}
-                    placeholder="C:\Folder\Path"
-                    className="flex-1 bg-surface-light border border-white/10 rounded px-3 py-1 text-sm focus:outline-none focus:border-indigo-500/50 transition-colors"
-                  />
-                  <button
-                    onClick={handleExport}
-                    disabled={isExporting || !exportPath}
-                    className="px-4 py-1.5 bg-indigo-500 hover:bg-indigo-400 text-white rounded text-xs font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                  >
-                    {isExporting ? 'EXPORTING...' : 'CONFIRM EXPORT'}
-                  </button>
-                </div>
-              )}
-
-              {isProcessingContent && <div className="text-xs font-mono text-cyan-500/70 max-w-md truncate">AI Data Scan: {taggingStats.current}</div>}
+                )}
+              </div>
             </div>
           </div>
 
+
+          {/* Active Filter Chips */}
+          {
+            (activeTagFilters.length > 0 || activeAuthorFilters.length > 0) && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm text-secondary">Filtered by:</span>
+
+                {/* Tag Filters */}
+                {activeTagFilters.map(tag => (
+                  <button
+                    key={`tag-${tag}`}
+                    onClick={() => removeTagFilter(tag)}
+                    className="px-3 py-1 bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full text-sm flex items-center gap-2 hover:bg-indigo-500/30 transition-colors"
+                  >
+                    {tag}
+                    <span className="text-indigo-400">×</span>
+                  </button>
+                ))}
+
+                {/* Author Filters */}
+                {activeAuthorFilters.map(author => (
+                  <button
+                    key={`author-${author}`}
+                    onClick={() => removeAuthorFilter(author)}
+                    className="px-3 py-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full text-sm flex items-center gap-2 hover:bg-emerald-500/30 transition-colors"
+                  >
+                    <span className="text-[10px] uppercase opacity-70">Author:</span> {author}
+                    <span className="text-emerald-400">×</span>
+                  </button>
+                ))}
+
+                <button
+                  onClick={clearAllFilters}
+                  className="text-sm text-secondary hover:text-white underline"
+                >
+                  Clear all
+                </button>
+              </div>
+            )
+          }
+
+          {/* Bulk Export Section */}
+          {
+            (activeTagFilters.length > 0 || activeAuthorFilters.length > 0) && (
+              <div className="flex items-center gap-3 p-4 bg-indigo-500/5 border border-indigo-500/10 rounded-xl mt-2 animate-in fade-in slide-in-from-top-2 duration-300">
+                <div className="text-secondary text-sm font-medium whitespace-nowrap">
+                  Export {filteredBooks.length} books to:
+                </div>
+                <input
+                  type="text"
+                  value={exportPath}
+                  onChange={(e) => setExportPath(e.target.value)}
+                  placeholder="C:\Folder\Path"
+                  className="flex-1 bg-surface-light border border-white/10 rounded px-3 py-1 text-sm focus:outline-none focus:border-indigo-500/50 transition-colors"
+                />
+                <button
+                  onClick={handleExport}
+                  disabled={isExporting || !exportPath}
+                  className="px-4 py-1.5 bg-indigo-500 hover:bg-indigo-400 text-white rounded text-xs font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {isExporting ? 'EXPORTING...' : 'CONFIRM EXPORT'}
+                </button>
+              </div>
+            )
+          }
+
+          {isProcessingContent && <div className="text-xs font-mono text-cyan-500/70 max-w-md truncate">AI Data Scan: {taggingStats.current}</div>}
           {/* Book List */}
           <div className="bg-surface border border-white/5 rounded-2xl overflow-visible">
             <table className="w-full text-left text-sm" style={{ tableLayout: 'fixed' }}>
@@ -1019,45 +1082,47 @@ function App() {
             </table>
 
             {/* Pagination Controls */}
-            {totalPages > 1 && (
-              <div className="mt-4 flex items-center justify-between px-4 py-3 bg-white/5 rounded-lg">
-                <div className="flex items-center gap-4">
-                  <span className="text-sm text-secondary">
-                    Showing {startIndex + 1}-{Math.min(endIndex, filteredBooks.length)} of {filteredBooks.length} books
-                  </span>
-                  <select
-                    value={itemsPerPage}
-                    onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }}
-                    className="px-3 py-1 bg-white/10 border border-white/20 rounded text-sm text-white"
-                  >
-                    <option value={100}>100 per page</option>
-                    <option value={500}>500 per page</option>
-                    <option value={1000}>1000 per page</option>
-                  </select>
+            {
+              totalPages > 1 && (
+                <div className="mt-4 flex items-center justify-between px-4 py-3 bg-white/5 rounded-lg">
+                  <div className="flex items-center gap-4">
+                    <span className="text-sm text-secondary">
+                      Showing {startIndex + 1}-{Math.min(endIndex, filteredBooks.length)} of {filteredBooks.length} books
+                    </span>
+                    <select
+                      value={itemsPerPage}
+                      onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }}
+                      className="px-3 py-1 bg-white/10 border border-white/20 rounded text-sm text-white"
+                    >
+                      <option value={100}>100 per page</option>
+                      <option value={500}>500 per page</option>
+                      <option value={1000}>1000 per page</option>
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                      disabled={currentPage === 1}
+                      className="px-4 py-2 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded text-sm font-medium"
+                    >
+                      Previous
+                    </button>
+                    <span className="text-sm text-secondary">
+                      Page {currentPage} of {totalPages}
+                    </span>
+                    <button
+                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                      disabled={currentPage === totalPages}
+                      className="px-4 py-2 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded text-sm font-medium"
+                    >
+                      Next
+                    </button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                    disabled={currentPage === 1}
-                    className="px-4 py-2 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded text-sm font-medium"
-                  >
-                    Previous
-                  </button>
-                  <span className="text-sm text-secondary">
-                    Page {currentPage} of {totalPages}
-                  </span>
-                  <button
-                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                    disabled={currentPage === totalPages}
-                    className="px-4 py-2 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded text-sm font-medium"
-                  >
-                    Next
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </main>
+              )
+            }
+          </div >
+        </main >
       </div >
     </div >
   )

@@ -5,6 +5,24 @@ All notable changes to Vector Bookshelf will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.3] - 2026-01-30
+
+### Added
+
+- **Server-Side Search & Filtering**:
+  - **Search Bar**: Real-time (debounced) search for Titles, Authors, and Tags.
+  - **Year Filtering**: Filter books by publication year range.
+  - **Dynamic Results**: Instant count updates (e.g., "15 results").
+- **Force Stop Command**: Added "X" button to active scans that sends a `POST /api/scan/stop` command to immediately halt the server-side scanning loop.
+- **Sticky Header**: Library controls and search bar now stay visible while scrolling.
+
+### Fixed
+
+- **Force Stop Button**: Now correctly terminates the backend process instead of just hiding the UI.
+- **Documentation**: Removed legacy references to external library managers (Calibre) to clarify "Source of Truth" philosophy.
+
+---
+
 ## [0.5.2] - 2026-01-30
 
 ### Added

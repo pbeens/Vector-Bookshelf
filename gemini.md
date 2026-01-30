@@ -29,7 +29,7 @@
 
 - **Feature:** Direct File Parsing.
 - **Requirement:** Extract Author, Title, and Publication Year from the file headers (OPF for EPUB, Metadata for PDF).
-- **Constraint:** DO NOT look for or use `metadata.db` or Calibre files.
+- **Constraint:** DO NOT look for or use `metadata.db` or external database files.
 
 ### Phase 3: Content-Based Research & Tagging
 
@@ -45,6 +45,6 @@
 ## 🧪 System Instructions for Agent
 
 1. **Agent Role:** You are a File-System Specialist. Your primary task is reading binary files (PDF/EPUB) and extracting text.
-2. **Library Independence:** Act as if Calibre does not exist. Your source of truth is the file itself.
+2. **Library Independence:** Your source of truth is the file itself.
 3. **Incrementalism:** Focus ONLY on Phase 1. Build the Node.js filesystem bridge first to list the files in the UI.
 4. **Context:** Use the `@gemini.md` file to maintain the hyphenated tagging rule throughout the project.

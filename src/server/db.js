@@ -64,8 +64,41 @@ export function insertBook(filepath) {
   return info.changes > 0;
 }
 
-export function getAllBooks() {
-  return db.prepare('SELECT * FROM books ORDER BY created_at DESC').all();
+/**
+ * Get all books with optional search and filters.
+ * @param {string} [search] - Text to search in title, author, or tags
+ * @param {object} [filters] - { yearStart, yearEnd }
+ */
+export function getAllBooks(search, filters = {}) {
+  let query = 'SELECT * FROM books';
+  const params = [];
+  const conditions = [];
+
+  // Search (Title, Author, Tags)
+  if (search && search.trim()) {
+    const likeQuery = `%${search.trim()}%`;
+    conditions.push('(title LIKE ? OR author LIKE ? OR tags LIKE ?)');
+    params.push(likeQuery, likeQuery, likeQuery);
+  }
+
+  // Year Range
+  if (filters.yearStart) {
+    conditions.push('publication_year >= ?');
+    params.push(filters.yearStart);
+  }
+  if (filters.yearEnd) {
+    conditions.push('publication_year <= ?');
+    params.push(filters.yearEnd);
+  }
+
+  // Combine conditions
+  if (conditions.length > 0) {
+    query += ' WHERE ' + conditions.join(' AND ');
+  }
+
+  query += ' ORDER BY created_at DESC';
+
+  return db.prepare(query).all(...params);
 }
 
 export function updateBookMetadata(filepath, { title, author, publication_year }) {

@@ -45,6 +45,7 @@ The system operates in **Phases** to ensure performance and data integrity.
 
 ## ✨ UI Features
 
+- **Smart Search & Filtering:** Instantly search by Title, Author, or Tag. Filter by Publication Year. Results update in real-time.
 - **Adaptive Categories:** The system "learns" from your tags to create high-level categories (e.g., "Fiction", "Science-Fiction", "History").
 - **Manual Metadata Editing:** Hover over any Title/Author to see a ✎ pencil. Click to edit inline. Edits are **locked** and safe from auto-scans.
 - **Bulk Export:** Filter your library (e.g., "Fiction" + "Neil Gaiman") and export the actual files to a folder of your choice.
