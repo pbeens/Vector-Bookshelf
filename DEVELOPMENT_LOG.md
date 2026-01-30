@@ -21,6 +21,34 @@
 
 ---
 
+## 2026-01-30 - v0.5.2: Error Reporting & Stability Hardening
+
+### New Features
+
+1. **Error Reporting System**
+    - **Backend:** Added `POST /api/books/export-errors` endpoint to scan database for `Error:...` or `Skipped:...` tags.
+    - **File Output:** Generates `SCAN_ERRORS.txt` in the project root containing a detailed list of all failed files and reasons.
+    - **Smart UI Button:**
+        - "Export Errors" button appears **only** when errors exist and have not been dismissed.
+        - Tracks dismissed errors via `localStorage`. Any *new* errors found in a subsequent scan will trigger the button to reappear.
+        - Displays count of "New" errors (e.g., "Export Errors (3 New)").
+
+### Critical Fixes
+
+1. **"Stuck at 6/x" Progress Bug**
+    - **Issue:** Scans appeared stuck because the backend failed to send progress events if `processBookContent` threw an error (caught in the `catch` block).
+    - **Fix:** Refactored the scan loop in `index.js` to ensure the `progress` event is emitted **after** the `try/catch` block, guaranteeing UI updates for every single file regardless of success or failure.
+
+2. **Infinite Retry Loop (Empty Content)**
+    - **Issue:** Books returning `null` (e.g., PDFs with no text) were assigned empty tags `''`, causing them to be picked up again by the `content_scanned = 0 OR tags = ''` query.
+    - **Fix:** Logic updated to explicit assign `Skipped: No Content` tag to these files, removing them from the queue permanently.
+
+3. **Future Roadmap**
+    - Added `SCAN_ERRORS.txt` to `.gitignore`.
+    - Updated `README.md` with a "Future Roadmap" section, prioritizing Cloud/External LLM API support.
+
+---
+
 ## 2026-01-29 - v0.5.1: Robustness & AI Integration Fixes
 
 ### Critical Fixes
@@ -48,6 +76,32 @@
     - Fixed "0/0 Books" bug caused by incorrect SQL string quoting (`""` vs `''`).
 
 ---
+
+## 2026-01-30 - v0.5.2: Error Reporting & Stability Hardening
+
+### New Features
+
+1. **Error Reporting System**
+    - **Backend:** Added `POST /api/books/export-errors` endpoint to scan database for `Error:...` or `Skipped:...` tags.
+    - **File Output:** Generates `SCAN_ERRORS.txt` in the project root containing a detailed list of all failed files and reasons.
+    - **Smart UI Button:**
+        - "Export Errors" button appears **only** when errors exist and have not been dismissed.
+        - Tracks dismissed errors via `localStorage`. Any *new* errors found in a subsequent scan will trigger the button to reappear.
+        - Displays count of "New" errors (e.g., "Export Errors (3 New)").
+
+### Critical Fixes
+
+1. **"Stuck at 6/x" Progress Bug**
+    - **Issue:** Scans appeared stuck because the backend failed to send progress events if `processBookContent` threw an error (caught in the `catch` block).
+    - **Fix:** Refactored the scan loop in `index.js` to ensure the `progress` event is emitted **after** the `try/catch` block, guaranteeing UI updates for every single file regardless of success or failure.
+
+2. **Infinite Retry Loop (Empty Content)**
+    - **Issue:** Books returning `null` (e.g., PDFs with no text) were assigned empty tags `''`, causing them to be picked up again by the `content_scanned = 0 OR tags = ''` query.
+    - **Fix:** Logic updated to explicit assign `Skipped: No Content` tag to these files, removing them from the queue permanently.
+
+3. **Future Roadmap**
+    - Added `SCAN_ERRORS.txt` to `.gitignore`.
+    - Updated `README.md` with a "Future Roadmap" section, prioritizing Cloud/External LLM API support.
 
 ## 2026-01-29 - Feature Complete: Adaptive AI & Power Tools
 

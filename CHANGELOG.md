@@ -5,6 +5,27 @@ All notable changes to Vector Bookshelf will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2026-01-30
+
+### Added
+
+- **Error Reporting System**: New feature to identify and export problematic files.
+  - Generates `SCAN_ERRORS.txt` with detailed failure reasons.
+  - "Export Errors" button in UI (smartly hides when not needed).
+  - Tracks "dismissed" errors locally so the button implies *new* issues.
+- **Persistent AI Scanning**: Scans now run "headless" on the server. Closing the browser does not stop the scan; reopening it resumes the progress bar.
+
+### Fixed
+
+- **Scan Progress Stalling**: Fixed a bug where single-file crashes halted the UI progress counter.
+- **Infinite Loop on Empty Files**: Files with no extractable text are now properly marked as "Skipped" instead of infinitely retrying.
+
+### Changed
+
+- Updated `.gitignore` to exclude `SCAN_ERRORS.txt`.
+
+---
+
 ## [0.5.1] - 2026-01-29
 
 ### Added

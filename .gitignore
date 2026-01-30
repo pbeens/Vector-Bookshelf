@@ -28,3 +28,6 @@ library.db-wal
 library.db-shm
 taxonomy.json
 
+
+# Generated reports
+SCAN_ERRORS.txt

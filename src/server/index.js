@@ -20,6 +20,13 @@ initDB();
 
 // Global State for robustness
 let currentProcessingFile = null;
+let scanState = {
+    active: false,
+    processed: 0,
+    total: 0,
+    currentFile: null,
+    startTime: null
+};
 
 // ... (rest of the listeners and endpoints follow)
 
@@ -48,6 +55,11 @@ process.on('unhandledRejection', (reason, promise) => {
              updateBookContent(currentProcessingFile, { tags: 'Error: Promise Rejection', summary: `Rejection: ${reason}` });
         } catch (e) {}
     }
+});
+
+// Check Scan Status
+app.get('/api/scan/status', (req, res) => {
+    res.json(scanState);
 });
 
 // Health check
@@ -369,85 +381,131 @@ app.post('/api/books/process-metadata', async (req, res) => {
 // Process Content/Tags (Phase 3)
 app.post('/api/books/process-content', async (req, res) => {
     console.log('[API] /api/books/process-content HIT');
+    
+    // If scan is already running, reject new request
+    if (scanState.active) {
+        return res.status(409).json({ error: 'Scan already in progress', status: scanState });
+    }
+
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
-    // Get total count first for progress bar
+    // Reset State
     const allBooks = database.prepare("SELECT COUNT(*) as count FROM books WHERE metadata_scanned = 1 AND (content_scanned = 0 OR tags IS NULL OR tags = '')").get();
-    const totalToProcess = allBooks.count;
-    let processedTotal = 0;
+    scanState.total = allBooks.count;
+    scanState.processed = 0;
+    scanState.active = true;
+    scanState.startTime = Date.now();
+    scanState.currentFile = 'Initializing...';
     
-    console.log(`[TaggerJob] Starting processing for ~${totalToProcess} total books in batches`);
+    console.log(`[TaggerJob] Starting processing for ~${scanState.total} total books`);
 
     try {
-        res.write(`data: ${JSON.stringify({ type: 'start', total: totalToProcess })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: 'start', total: scanState.total })}\n\n`);
     } catch (e) {
         console.error('[TaggerJob] Failed to write start', e);
     }
 
-    const BATCH_SIZE = 50;
-    let keepGoing = true;
+    // Start background processing loop (detached from request)
+    (async () => {
+        const BATCH_SIZE = 50;
+        let keepGoing = true;
 
-    while (keepGoing) {
-        // Get next batch
-        const books = getBooksNeedingContent(BATCH_SIZE);
-        
-        if (books.length === 0) {
-            break;
-        }
-        
-        console.log(`[TaggerJob] Processing batch of ${books.length} books`);
-
-        for (const book of books) {
-            currentProcessingFile = book.filepath;
-            const basename = path.basename(book.filepath);
-            console.log(`[TaggerJob] >>> Starting: ${basename} (Book ${processedTotal + 1}/${totalToProcess})`);
-            try {
-                const contentData = await processBookContent(book.filepath);
-                
-                if (contentData) {
-                    console.log(`[TaggerJob] Success: ${basename} -> Tags: ${contentData.tags}`);
-                    updateBookContent(book.filepath, contentData);
-                    
-                    // Auto-apply Master Tags
-                    const masterTags = computeMasterTags(contentData.tags);
-                    if (masterTags) {
-                        updateMasterTags(book.filepath, masterTags);
-                    }
-                } else {
-                    console.warn(`[TaggerJob] No content data generated for: ${basename}`);
-                    updateBookContent(book.filepath, { tags: '', summary: '' });
+        try {
+            while (keepGoing && scanState.active) {
+                const books = getBooksNeedingContent(BATCH_SIZE);
+                if (books.length === 0) {
+                    keepGoing = false;
+                    break;
                 }
                 
-                processedTotal++;
-                
-                try {
-                    res.write(`data: ${JSON.stringify({ 
-                        type: 'progress', 
-                        processed: processedTotal, 
-                        total: totalToProcess, 
-                        current: basename,
-                        tags: contentData ? contentData.tags : ''
-                    })}\n\n`);
-                } catch (writeErr) { }
+                console.log(`[TaggerJob] Processing batch of ${books.length} books`);
 
-            } catch (e) {
-                console.error(`[TaggerJob] Error processing ${basename}:`, e);
-                // Mark as failed with explicit tag to prevent infinite loop
-                updateBookContent(book.filepath, { tags: 'Error: Scan Failed', summary: `Failed to process: ${e.message}` });
-                processedTotal++;
+                for (const book of books) {
+                    scanState.currentFile = path.basename(book.filepath);
+                    currentProcessingFile = book.filepath;
+                    
+                    console.log(`[TaggerJob] >>> Starting: ${scanState.currentFile} (${scanState.processed + 1}/${scanState.total})`);
+                    let tagsToSend = '';
+                    
+                    try {
+                        const contentData = await processBookContent(book.filepath);
+                        
+                        if (contentData) {
+                            console.log(`[TaggerJob] Success: ${scanState.currentFile}`);
+                            updateBookContent(book.filepath, contentData);
+                            tagsToSend = contentData.tags;
+                            
+                            const masterTags = computeMasterTags(contentData.tags);
+                            if (masterTags) updateMasterTags(book.filepath, masterTags);
+                        } else {
+                            console.warn(`[TaggerJob] No content data for: ${scanState.currentFile}`);
+                            updateBookContent(book.filepath, { tags: 'Skipped: No Content', summary: 'Insufficient text.' });
+                            tagsToSend = 'Skipped: No Content';
+                        }
+                    } catch (e) {
+                        console.error(`[TaggerJob] Error processing ${scanState.currentFile}:`, e);
+                        updateBookContent(book.filepath, { tags: 'Error: Scan Failed', summary: e.message });
+                        tagsToSend = 'Error: Scan Failed';
+                    }
+
+                    scanState.processed++;
+                    
+                    try {
+                        res.write(`data: ${JSON.stringify({ 
+                            type: 'progress', 
+                            processed: scanState.processed, 
+                            total: scanState.total, 
+                            current: scanState.currentFile,
+                            tags: tagsToSend
+                        })}\n\n`);
+                    } catch (writeErr) { }
+                }
             }
+        } catch (err) {
+            console.error('[TaggerJob] FATAL LOOP ERROR:', err);
+        } finally {
+            scanState.active = false;
+            scanState.currentFile = null;
+            currentProcessingFile = null;
+            console.log('[TaggerJob] Job Complete');
+            
+            try {
+                res.write(`data: ${JSON.stringify({ type: 'complete' })}\n\n`);
+                res.end();
+            } catch (e) { }
         }
-    }
-    
-    currentProcessingFile = null;
-    console.log('[TaggerJob] Batch Complete');
-    
+    })();
+});
+
+// Export Errors to File
+app.post('/api/books/export-errors', async (req, res) => {
     try {
-        res.write(`data: ${JSON.stringify({ type: 'complete' })}\n\n`);
-        res.end();
-    } catch (e) { }
+        const errors = database.prepare(`
+            SELECT filepath, tags, summary FROM books 
+            WHERE tags LIKE 'Error:%' OR tags LIKE 'Skipped:%'
+        `).all();
+
+        if (errors.length === 0) {
+            return res.json({ success: true, count: 0, message: 'No errors found.' });
+        }
+
+        const reportPath = path.join(process.cwd(), 'SCAN_ERRORS.txt');
+        const reportContent = errors.map(e => {
+            return `[${e.tags}] ${path.basename(e.filepath)}\nReason: ${e.summary}\nPath: ${e.filepath}\n----------------------------------------`;
+        }).join('\n\n');
+
+        const header = `VECTOR BOOKSHELF - SCAN ERROR REPORT\nGenerated: ${new Date().toLocaleString()}\nTotal Issues: ${errors.length}\n\n`;
+
+        await fs.promises.writeFile(reportPath, header + reportContent, 'utf8');
+
+        console.log(`[API] Exported ${errors.length} errors to ${reportPath}`);
+        res.json({ success: true, count: errors.length, path: reportPath });
+    } catch (e) {
+        console.error('[API] Failed to export errors:', e);
+        res.status(500).json({ error: e.message });
+    }
 });
 
 // Reset failed AI scans (books marked as scanned but have no tags)

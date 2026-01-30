@@ -2,6 +2,13 @@
 
 A high-end research tool that treats a directory of books as a raw knowledge base, extracting its own metadata, relationship intelligence, and AI-derived classifications.
 
+> [!IMPORTANT]
+> **AI Requirement:** This project currently requires **[LM Studio](https://lmstudio.ai/)** to be installed and running locally (Server Mode on port `1234`) to power the AI tagging and summarization features.
+>
+> *Support for cloud-based LLM APIs (OpenAI, Anthropic, etc.) is planned for a future release.*
+>
+> *Note: This repository also includes development support files, such as custom `skills/` configurations, to assist with agentic development workflows.*
+
 ## 🛠 Tech Stack
 
 - **Frontend:** React (Vite) + Tailwind CSS v4
@@ -45,6 +52,7 @@ The system operates in **Phases** to ensure performance and data integrity.
 - **Interactive Hover Summaries:** Hover over any title to see an AI-generated summary tooltip.
 - **"Scan Now" Tooltip Action:** Process individual books instantly without a full library scan.
 - **Clickable Filenames:** Click any filename in the library table to open its containing folder in Windows Explorer.
+- **Error Reporting:** Built-in "Export Errors" tool generates a text file report of all corrupted or skipped books for easy cleanup.
 - **Real-time Stats:** Live tracking of detected files, added books, metadata extraction, and failures.
 - **Glassmorphism UI:** Modern, premium aesthetic with smooth transitions and stable layouts.
 
@@ -55,6 +63,10 @@ The project includes built-in automation to help with testing, cleanup, and docu
 - **`/restart-server`**: Stops all Node.js processes and restarts both the backend and frontend servers.
 - **`/wipe-db`**: Stops all servers, deletes the database files, and restarts the backend/frontend stack from scratch.
 - **`/update-docs`**: Updates `DEVELOPMENT_LOG.md` and `README.md` to reflect current project state and recent changes.
+
+## 🔮 Future Roadmap
+
+- **Cloud/External LLM API Support:** Allow users to switch from local LM Studio to OpenAI, Anthropic, or DeepSeek APIs for faster processing without high-end GPU requirements.
 
 ## 📦 Project Setup
 
@@ -94,3 +106,8 @@ The project includes built-in automation to help with testing, cleanup, and docu
 
 4. **Access UI**
     Visit `http://localhost:5173/`
+
+## 🐛 Feedback & Support
+
+Found a bug? Have a feature idea?
+Please create a new **Issue** in this repository. We welcome feedback to make Vector Bookshelf better!

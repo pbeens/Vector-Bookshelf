@@ -37,6 +37,13 @@ function App() {
   const [taxonomyStats, setTaxonomyStats] = useState({ state: 'idle', current: 0, total: 0, message: '' })
   const [isBackendOnline, setIsBackendOnline] = useState(false)
   const [isAiOnline, setIsAiOnline] = useState(false)
+  const [dismissedErrorPaths, setDismissedErrorPaths] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('dismissedErrorPaths') || '[]')
+    } catch {
+      return []
+    }
+  })
 
   // Poll server status
   useEffect(() => {
@@ -72,13 +79,56 @@ function App() {
       }
     }
 
+    // Check Scan Status (Headless support)
+    const checkScanStatus = async () => {
+      try {
+        const res = await fetch('/api/scan/status');
+        const data = await res.json();
+
+        if (data.active) {
+          // If backend says active but frontend didn't know, Update UI
+          setIsProcessingContent(true);
+          setTaggingStats({
+            processed: data.processed,
+            total: data.total,
+            current: data.currentFile || 'Processing...'
+          });
+        } else if (isProcessingContent && !data.active) {
+          // Backend finished but UI still thinks it's running? 
+          // Wait, maybe we just finished. 
+          // Let's only turn OFF if we were polling for it.
+          // Actually, if we are in "Zombie" mode (reloaded page), 
+          // we want to know when it stops.
+          // But we don't want to conflict with the event stream if it's live.
+          // Simpler: Just sync stats if active.
+
+          // If we JUST reloaded the page, isProcessingContent is false.
+          // If data.active is false, we stay false.
+
+          // If we are running (isProcessingContent=true) and data.active=false...
+          // It might mean the scan just finished.
+          // But normally the SSE 'complete' event handles this.
+          // However, if we lost SSE (reload), we depend on this poller to finish.
+          setIsProcessingContent(false);
+        }
+      } catch (e) {
+        console.error("Failed to check scan status", e);
+      }
+    };
+
     checkHealth() // Initial check
+    checkScanStatus() // Initial check
 
     // If we are actively scanning/processing, ping LESS often to save resources (15s)
     // Otherwise, ping frequently to show responsiveness (2s)
-    const pollInterval = (isScanning || isProcessingContent || isSyncingTaxonomy) ? 15000 : 2000;
+    const pollInterval = (isScanning || isProcessingContent || isSyncingTaxonomy) ? 5000 : 2000;
+    // We increased frequency during scan for better "Resume" feel, 5s is fine.
 
-    const interval = setInterval(checkHealth, pollInterval)
+    const interval = setInterval(() => {
+      checkHealth();
+      checkScanStatus();
+    }, pollInterval);
+
     return () => clearInterval(interval)
   }, [isScanning, isProcessingContent, isSyncingTaxonomy])
 
@@ -594,22 +644,57 @@ function App() {
                       </button>
                     )}
                   </div>
-                  <button
-                    onClick={handleSyncTaxonomy}
-                    disabled={isProcessingMetadata || isProcessingContent || isSyncingTaxonomy || books.length === 0}
-                    className={`relative px-6 py-2 rounded-lg font-medium border border-amber-500/20 bg-amber-950/20 text-amber-400 hover:bg-amber-500/10 ${isSyncingTaxonomy ? 'bg-neutral-800' : ''} ${books.some(b => b.tags && !b.master_tags) ? 'animate-pulse ring-1 ring-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.3)]' : ''}`}
-                    title="AI groups your tags into categories"
-                  >
-                    {isSyncingTaxonomy
-                      ? (taxonomyStats.message || 'Syncing...')
-                      : 'Rescan Categories'}
-                    {!isSyncingTaxonomy && books.some(b => b.tags && !b.master_tags) && (
-                      <span className="absolute -top-1 -right-1 flex h-3 w-3">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-500"></span>
-                      </span>
-                    )}
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleSyncTaxonomy}
+                      disabled={isProcessingMetadata || isProcessingContent || isSyncingTaxonomy || books.length === 0}
+                      className={`relative px-6 py-2 rounded-lg font-medium border border-amber-500/20 bg-amber-950/20 text-amber-400 hover:bg-amber-500/10 ${isSyncingTaxonomy ? 'bg-neutral-800' : ''} ${books.some(b => b.tags && !b.master_tags) ? 'animate-pulse ring-1 ring-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.3)]' : ''}`}
+                      title="AI groups your tags into categories"
+                    >
+                      {isSyncingTaxonomy
+                        ? (taxonomyStats.message || 'Syncing...')
+                        : 'Rescan Categories'}
+                      {!isSyncingTaxonomy && books.some(b => b.tags && !b.master_tags) && (
+                        <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-500"></span>
+                        </span>
+                      )}
+                    </button>
+                    {(() => {
+                      const errorBooks = books.filter(b => b.tags && (b.tags.includes('Error:') || b.tags.includes('Skipped:')));
+                      const newErrorBooks = errorBooks.filter(b => !dismissedErrorPaths.includes(b.filepath));
+
+                      if (newErrorBooks.length === 0) return null;
+
+                      return (
+                        <button
+                          onClick={async () => {
+                            if (!confirm('Generate a report of all failed/skipped books?')) return;
+                            try {
+                              const res = await fetch('/api/books/export-errors', { method: 'POST' });
+                              const data = await res.json();
+                              if (data.success) {
+                                alert(`Report generated!\n\nFound: ${data.count} issues\nSaved to: SCAN_ERRORS.txt`);
+                                // Add ALL current error books to dismissed list
+                                const allPaths = errorBooks.map(b => b.filepath);
+                                setDismissedErrorPaths(allPaths);
+                                localStorage.setItem('dismissedErrorPaths', JSON.stringify(allPaths));
+                              } else {
+                                alert('Failed to generate report.');
+                              }
+                            } catch (e) {
+                              alert('Error: ' + e.message);
+                            }
+                          }}
+                          className="px-4 py-2 rounded-lg font-medium border border-red-500/20 bg-red-950/10 text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors"
+                          title="Export list of failed scans to text file"
+                        >
+                          Export Errors ({newErrorBooks.length} New)
+                        </button>
+                      );
+                    })()}
+                  </div>
                 </div>
               </div>
 
