@@ -107,7 +107,13 @@ app.get('/api/books', (req, res) => {
     };
 
     const books = getAllBooks(search, filters);
-    console.log(`[API] Returning ${books.length} books (Search: "${search}", Years: ${filters.yearStart}-${filters.yearEnd})`);
+    
+    // Get total uncensored count for UI "Total books in library" display
+    const totalCount = database.prepare('SELECT COUNT(*) as count FROM books').get().count;
+    res.set('X-Library-Size', totalCount.toString());
+    res.set('Access-Control-Expose-Headers', 'X-Library-Size');
+
+    console.log(`[API] Returning ${books.length} books (Search: "${search}", Years: ${filters.yearStart}-${filters.yearEnd}, Total Lib: ${totalCount})`);
     res.json(books);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -401,14 +407,45 @@ app.post('/api/books/process-content', async (req, res) => {
     res.setHeader('Connection', 'keep-alive');
 
     // Reset State
-    const allBooks = database.prepare("SELECT COUNT(*) as count FROM books WHERE metadata_scanned = 1 AND (content_scanned = 0 OR tags IS NULL OR tags = '')").get();
-    scanState.total = allBooks.count;
+    let targetBooks = [];
+    let isTargeted = false;
+    
+    // Parse body for targeted scan (e.g. filtered view)
+    // Note: Use a limit for incoming data to prevent massive payloads if needed
+    if (req.body && req.body.targetFilepaths && Array.isArray(req.body.targetFilepaths)) {
+        isTargeted = true;
+        console.log(`[TaggerJob] Targeted scan requested for ${req.body.targetFilepaths.length} files.`);
+        
+        // Filter DB to find which of these actually NEED scanning
+        // We do this in chunks to avoid SQLite variable limits (999)
+        const chunks = [];
+        for (let i = 0; i < req.body.targetFilepaths.length; i += 900) {
+            chunks.push(req.body.targetFilepaths.slice(i, i + 900));
+        }
+        
+        for (const chunk of chunks) {
+            const placeholders = chunk.map(() => '?').join(',');
+            const rows = database.prepare(`
+                SELECT filepath FROM books 
+                WHERE filepath IN (${placeholders}) 
+                AND (content_scanned = 0 OR tags IS NULL OR tags = '')
+            `).all(...chunk);
+            targetBooks.push(...rows);
+        }
+        
+        scanState.total = targetBooks.length;
+    } else {
+        // Default: Scan ALL missing
+        const allBooks = database.prepare("SELECT COUNT(*) as count FROM books WHERE metadata_scanned = 1 AND (content_scanned = 0 OR tags IS NULL OR tags = '')").get();
+        scanState.total = allBooks.count;
+    }
+
     scanState.processed = 0;
     scanState.active = true;
     scanState.startTime = Date.now();
     scanState.currentFile = 'Initializing...';
     
-    console.log(`[TaggerJob] Starting processing for ~${scanState.total} total books`);
+    console.log(`[TaggerJob] Starting processing for ${scanState.total} books (${isTargeted ? 'Targeted' : 'Full Scan'})`);
 
     try {
         res.write(`data: ${JSON.stringify({ type: 'start', total: scanState.total })}\n\n`);
@@ -416,14 +453,32 @@ app.post('/api/books/process-content', async (req, res) => {
         console.error('[TaggerJob] Failed to write start', e);
     }
 
-    // Start background processing loop (detached from request)
+    // Start background processing loop
     (async () => {
         const BATCH_SIZE = 50;
         let keepGoing = true;
+        let targetIndex = 0; // For iterating targeted array
 
         try {
             while (keepGoing && scanState.active) {
-                const books = getBooksNeedingContent(BATCH_SIZE);
+                let books = [];
+                
+                if (isTargeted) {
+                    // Pull next batch from header array
+                    if (targetIndex >= targetBooks.length) {
+                        books = [];
+                    } else {
+                        const slice = targetBooks.slice(targetIndex, targetIndex + BATCH_SIZE);
+                        // We need full book objects or just filepath? 
+                        // The loop uses `book.filepath`.
+                        books = slice; 
+                        targetIndex += BATCH_SIZE;
+                    }
+                } else {
+                    // Pull from DB
+                    books = getBooksNeedingContent(BATCH_SIZE);
+                }
+
                 if (books.length === 0) {
                     keepGoing = false;
                     break;
@@ -541,6 +596,102 @@ app.post('/api/books/reset-failed-scans', (req, res) => {
     } catch (err) {
         console.error('[ResetScans] Error:', err);
         res.status(500).json({ error: err.message });
+    }
+});
+
+// TAXONOMY DOCTOR: Re-Evaluate a specific tag
+app.post('/api/taxonomy/re-eval', (req, res) => {
+    const { tag } = req.body;
+    if (!tag) return res.status(400).json({ error: 'Tag required' });
+
+    try {
+        // Matches tag surrounded by delimiters or start/end of string
+        // robust against "Tag, Tag" vs "Tag,Tag" by removing spaces for the check
+        const stmt = database.prepare(`
+            UPDATE books 
+            SET content_scanned = 0, tags = NULL, summary = NULL
+            WHERE ',' || REPLACE(tags, ' ', '') || ',' LIKE ?
+        `);
+        const result = stmt.run(`%,${tag.trim()},%`);
+        console.log(`[TaxonomyDoctor] Re-evaluating tag '${tag}'. Reset ${result.changes} books.`);
+        res.json({ success: true, count: result.changes });
+    } catch (e) {
+        console.error('[TaxonomyDoctor] Error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// TAXONOMY DOCTOR: Apply Implication Rules (Rule-Based Fixes)
+app.post('/api/taxonomy/apply-implications', async (req, res) => {
+    try {
+        const rulesPath = path.resolve('tagging_rules.md');
+        if (!fs.existsSync(rulesPath)) {
+            return res.json({ success: true, changes: 0, message: 'No rules file found.' });
+        }
+
+        const ruleContent = fs.readFileSync(rulesPath, 'utf8');
+        const lines = ruleContent.split('\n');
+        let totalChanges = 0;
+        let appliedRules = [];
+
+        // Simple Parser for "If X, ensures Y" or "X -> Y"
+        // We look for logic: "If a book is about X, ensures it is also tagged with Y"
+        // Regex: /If .*?`([^`]+)`.*?ensures.*?`([^`]+)`/i
+        
+        for (const line of lines) {
+            const match = line.match(/If .*?`([^`]+)`.*?ensures.*?`([^`]+)`/i);
+            if (match) {
+                const [_, childTag, parentTag] = match;
+                // Query: Update books having child but NOT parent
+                // We use REPLACE to handle spacing variations
+                const stmt = database.prepare(`
+                    UPDATE books 
+                    SET tags = tags || ', ' || ? 
+                    WHERE ',' || REPLACE(tags, ' ', '') || ',' LIKE ? 
+                    AND ',' || REPLACE(tags, ' ', '') || ',' NOT LIKE ?
+                `);
+                
+                const result = stmt.run(parentTag, `%,${childTag},%`, `%,${parentTag},%`);
+                if (result.changes > 0) {
+                    totalChanges += result.changes;
+                    appliedRules.push(`${childTag} -> ${parentTag} (${result.changes} books)`);
+                    console.log(`[TaxonomyDoctor] Applied Rule: ${childTag} -> ${parentTag} (${result.changes} updated)`);
+                }
+            }
+        }
+
+        res.json({ success: true, changes: totalChanges, applied: appliedRules });
+    } catch (e) {
+        console.error('[TaxonomyDoctor] Application Error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// TAXONOMY DOCTOR: Get Rules
+app.get('/api/taxonomy/rules', (req, res) => {
+    try {
+        const rulesPath = path.resolve('tagging_rules.md');
+        if (fs.existsSync(rulesPath)) {
+            const content = fs.readFileSync(rulesPath, 'utf8');
+            res.json({ success: true, content });
+        } else {
+            res.json({ success: true, content: '' });
+        }
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// TAXONOMY DOCTOR: Save Rules
+app.post('/api/taxonomy/rules', (req, res) => {
+    try {
+        const { content } = req.body;
+        const rulesPath = path.resolve('tagging_rules.md');
+        fs.writeFileSync(rulesPath, content, 'utf8');
+        console.log('[TaxonomyDoctor] Rules updated by user.');
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
     }
 });
 

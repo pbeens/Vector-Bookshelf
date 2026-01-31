@@ -1,123 +1,40 @@
 # Changelog
 
-All notable changes to Vector Bookshelf will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [0.5.3] - 2026-01-30
+## [v0.6.0] - 2026-01-31
 
 ### Added
 
-- **Server-Side Search & Filtering**:
-  - **Search Bar**: Real-time (debounced) search for Titles, Authors, and Tags.
-  - **Year Filtering**: Filter books by publication year range.
-  - **Dynamic Results**: Instant count updates (e.g., "15 results").
-- **Force Stop Command**: Added "X" button to active scans that sends a `POST /api/scan/stop` command to immediately halt the server-side scanning loop.
-- **Sticky Header**: Library controls and search bar now stay visible while scrolling.
+- **Taxonomy Doctor UI**: A new tool (Stethoscope icon) to manage your library's organization.
+  - **Rules Editor**: Write custom logic in plain text (e.g., "Python -> Programming, not Snake").
+  - **Apply Hierarchies**: Instantly apply parent tags (e.g., Machine Learning -> AI).
+  - **Fix Ambiguity**: Reset specific tags in bulk to re-scan them with your new rules.
+- **Robustness**: Added 15s timeout to file parser to prevent "Stuck Scans" on corrupt books.
+- **Visuals**: Modern "Glassmorphism" UI updates for the new modals.
 
 ### Fixed
 
-- **Force Stop Button**: Now correctly terminates the backend process instead of just hiding the UI.
-- **Documentation**: Removed legacy references to external library managers (Calibre) to clarify "Source of Truth" philosophy.
+- Fixed an issue where "Reset Tag" would sometimes fail to find tags due to whitespace differences.
+- Fixed a bug where the library view wouldn't refresh immediately after applying rules.
 
----
-
-## [0.5.2] - 2026-01-30
+## [v0.5.4] - 2026-01-31
 
 ### Added
 
-- **Error Reporting System**: New feature to identify and export problematic files.
-  - Generates `SCAN_ERRORS.txt` with detailed failure reasons.
-  - "Export Errors" button in UI (smartly hides when not needed).
-  - Tracks "dismissed" errors locally so the button implies *new* issues.
-- **Persistent AI Scanning**: Scans now run "headless" on the server. Closing the browser does not stop the scan; reopening it resumes the progress bar.
+- **Tag Sieve**: New logic layer to normalize tags (lowercase, hyphenated) before they hit the database.
+- **Educational Docs**: Added `PROGRAMMING_CONCEPTS.md`.
 
-### Fixed
-
-- **Scan Progress Stalling**: Fixed a bug where single-file crashes halted the UI progress counter.
-- **Infinite Loop on Empty Files**: Files with no extractable text are now properly marked as "Skipped" instead of infinitely retrying.
-
-### Changed
-
-- Updated `.gitignore` to exclude `SCAN_ERRORS.txt`.
-
----
-
-## [0.5.1] - 2026-01-29
+## [v0.5.3] - 2026-01-30
 
 ### Added
 
-- **Pagination**: Library now displays books in pages (100/500/1000 per page) for better performance with large libraries
-  - Supports 30K+ books without performance degradation
-  - Previous/Next navigation buttons
-  - Page indicator showing current page and total pages
-  - Configurable items-per-page selector
+- **Search & Filter**: Real-time filtering by Title, Author, Year, and Tags.
+- **Active Filter Chips**: Visual indicators for current filters.
 
-### Fixed
-
-- **Failed AI Scans**: Books are no longer incorrectly marked as "scanned" when AI processing fails (e.g., LM Studio not running)
-  - Added `/api/books/reset-failed-scans` endpoint to recover from this state
-  - Run `fetch('http://localhost:3001/api/books/reset-failed-scans', { method: 'POST' })` in browser console to fix existing issues
-
-### Changed
-
-- Database files (`library.db`, `taxonomy.json`) are now excluded from version control via `.gitignore`
-- Added debug endpoint `/api/debug/count` for troubleshooting database issues
-- Frontend now uses pagination to render books in chunks instead of all at once
-
----
-
-## [0.5.0] - 2026-01-29
+## [v0.5.2] - 2026-01-30
 
 ### Added
 
-- **Fiction/Non-Fiction Hierarchy**: Categories now automatically include Fiction or Non-Fiction as the first category based on genre
-- **3-Category System**: Books can now have up to 3 categories (previously 2)
-- **Fuzzy Tag Matching**: Case-insensitive and format-agnostic tag matching for better reliability
-- **Author Name Parsing**: Proper handling of "Last, First" formatted author names
-- **Adaptive Category System**: AI learns from your tags to create high-level categories
-- **Manual Metadata Editing**: Click-to-edit inline editing for titles and authors with field locking
-- **Bulk Export**: Export filtered books to any folder
-- **Interactive Filtering**: Click authors and tags to filter the library
-- **Clickable Filenames**: Open containing folder in Windows Explorer
-- **Real-time Progress Tracking**: Live stats during scanning and processing
-
-### Changed
-
-- **Terminology**: Renamed "Master Tags" to "Categories" throughout the UI for clarity
-- **AI Tagging**: AI no longer generates "Fiction" or "Non-Fiction" as tags (determined automatically during categorization)
-- **Category Neutrality**: "Artificial-Intelligence" category can now be Fiction or Non-Fiction
-- **Tag Pruning**: Redundant tags are automatically removed when they become categories
-
-### Fixed
-
-- Author names in "Last, First" format no longer split into two separate authors
-- Tag matching now works regardless of spacing or hyphenation differences
-- Eliminated duplicate "Fiction"/"Non-Fiction" appearing as both tags and categories
-- **Failed AI Scans**: Books are no longer incorrectly marked as "scanned" when AI processing fails (e.g., LM Studio not running)
-  - Added `/api/books/reset-failed-scans` endpoint to recover from this state
-
-### Technical
-
-- Implemented `CATEGORY_TYPE_MAP` for Fiction/Non-Fiction classification
-- Added `updateBookTags()` function for tag pruning operations
-- Improved `computeMasterTags()` with normalized tag matching
-- Updated AI prompts to focus on specific genres and topics only
-- Enhanced `parseAuthors()` with pattern detection for reversed names
-- Added `/api/books/reset-failed-scans` endpoint to reset books with failed AI processing
-
----
-
-## Development Notes
-
-This is a **beta release** of Vector Bookshelf. The core functionality is complete and stable, but the project is still evolving based on user feedback and testing.
-
-The application provides a complete workflow for:
-
-1. Scanning a directory of EPUB/PDF books
-2. Extracting metadata and generating AI-powered tags
-3. Organizing books into hierarchical categories
-4. Filtering, searching, and exporting your library
-
-For detailed development history, see [DEVELOPMENT_LOG.md](DEVELOPMENT_LOG.md).
+- **Pagination**: Added efficient pagination (100/500/1000 items) to handle large libraries (32k+ books) without lag.
+- **Status Indicators**: Added Server and AI connection status LEDs in the header.
+- **Error Reporting**: New "Export Errors" button to generate a report of failed file scans.
+- **Persistence**: AI Scan now saves its state, allowing it to resume after server restarts.

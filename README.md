@@ -68,6 +68,11 @@ The project includes built-in automation to help with testing, cleanup, and docu
 ## 🔮 Future Roadmap
 
 - **Cloud/External LLM API Support:** Allow users to switch from local LM Studio to OpenAI, Anthropic, or DeepSeek APIs for faster processing without high-end GPU requirements.
+- **Visuals & Metadata:**
+  - **Local Covers:** Auto-extract `cover.jpg` from Calibre/local folders.
+  - **Google Books Integration:** Fallback API support for fetching missing covers and correcting metadata.
+- **Queue System:**
+  - **Non-Blocking Scans:** Queue up books or batches for AI processing while other operations continue.
 
 ## 📦 Project Setup
 

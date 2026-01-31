@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { getAllBooks, updateMasterTags, updateBookTags, runTransaction } from './db.js';
+import { getAllBooks, getBooksForTaxonomySync, updateMasterTags, updateBookTags, runTransaction } from './db.js';
 
 const TAXONOMY_FILE = path.resolve('taxonomy.json');
 
@@ -30,6 +30,65 @@ const PREFERRED_CATEGORIES = [
 ];
 
 const PREFERRED_CATEGORIES_STR = PREFERRED_CATEGORIES.join(', ');
+
+/**
+ * Normalizes a tag to a canonical format.
+ * e.g., "Sci Fi " -> "sci-fi"
+ */
+function normalizeTag(tag) {
+    return tag.toLowerCase()
+        .replace(/[\s_]+/g, '-')     // generic separators to hyphen
+        .replace(/[^a-z0-9\-\.]/g, '') // remove special chars except dots (for .net)
+        .replace(/^-+|-+$/g, '');    // trim hyphens
+}
+
+/**
+ * Deterministic Rules Engine
+ * Returns a Master Category or null
+ */
+function classifyTagByRules(tag) {
+    const t = normalizeTag(tag);
+    
+    // 1. History (Dates/Eras/War)
+    if (/^\d{4}s?(-.*)?$/.test(t)) return 'History'; // 1990s, 1980s-culture, 1984
+    if (/^\d{1,2}(th|st|nd|rd)-century/.test(t)) return 'History'; // 19th-century
+    if (t.includes('history') || t.includes('biography') || t.includes('memoir')) return 'History';
+    if (t.includes('war') || t.includes('military') || t.includes('battle')) return 'History';
+
+    // 2. Computer Science / Programming
+    if (/^(js|python|rust|c\+\+|java|ruby|php|sql|css|html)(\d*|script)?(\-|$)/.test(t)) return 'Computer-Science';
+    if (/\.net/.test(t) || t === 'c#' || t === 'f#') return 'Programming';
+    if (t.includes('programming') || t.includes('software') || t.includes('coding')) return 'Programming';
+    if (t.includes('algorithm') || t.includes('data-science') || t.includes('machine-learning')) return 'Computer-Science';
+
+    // 3. Society / Politics / Religion
+    if (t.includes('politics') || t.includes('government') || t.includes('election')) return 'Politics-Society';
+    if (t.includes('religion') || t.includes('spirituality') || t.includes('bible') || t.includes('church')) return 'Religion-Spirituality';
+    if (t.includes('buddhism') || t.includes('taoism') || t.includes('christianity') || t.includes('islam')) return 'Religion-Spirituality';
+
+    // 4. Arts / Culture
+    if (t.includes('art') || t.includes('design') || t.includes('music') || t.includes('cinema') || t.includes('film')) return 'Arts-Design';
+    if (t.includes('photography') || t.includes('architecture')) return 'Arts-Design';
+
+    // 5. Business / Finance
+    if (t.includes('business') || t.includes('management') || t.includes('leadership')) return 'Business-Economics';
+    if (t.includes('finance') || t.includes('economics') || t.includes('investing')) return 'Finance';
+
+    // 3. Suffixes/Keywords
+    if (t.endsWith('fiction')) {
+        if (t.includes('science')) return 'Science-Fiction';
+        return 'Fiction';
+    }
+    if (t.includes('fantasy')) return 'Fantasy';
+    if (t.includes('thriller') || t.includes('mystery')) return 'Mystery-Thriller';
+    if (t.includes('horror')) return 'Horror';
+    if (t.includes('cooking') || t.includes('recipe') || t.includes('cookbook')) return 'Cooking-Food';
+    if (t.includes('psychology')) return 'Psychology';
+    if (t.includes('finance') || t.includes('economics')) return 'Finance';
+    if (t.includes('education') || t.includes('tutorial')) return 'Education';
+
+    return null;
+}
 
 /**
  * Ask AI to group tags into high-level master categories
@@ -108,28 +167,72 @@ export async function syncAdaptiveTaxonomy(onProgress = () => {}) {
 
     // Load existing mapping
     const existingMapping = getStoredMapping();
-    const existingTags = new Set(Object.keys(existingMapping));
+    // OPTIMIZATION: Create a normalized set of existing keys to avoid case/separator mismatches
+    // e.g. "Space-Opera" in JSON should match "space opera" from DB
+    const normalizedExistingTags = new Set();
+    Object.keys(existingMapping).forEach(key => {
+        normalizedExistingTags.add(normalizeTag(key));
+    });
     
     // Identify ONLY new tags that haven't been mapped yet
-    const newTags = uniqueTags.filter(tag => !existingTags.has(tag));
+    // check normalizeTag(tag) against the set
+    let newTags = uniqueTags.filter(tag => !normalizedExistingTags.has(normalizeTag(tag)));
 
     let mapping = { ...existingMapping };
-    let updatedCount = 0;
     
-    if (newTags.length > 0) {
-        console.log(`[Taxonomy] Found ${newTags.length} NEW tags. Processing in batches...`);
+    // --- OPTIMIZATION: Rule-Based Pre-Classification ---
+    // Filter out tags we can categorize deterministically
+    const tagsToLearn = [];
+    let rulesAppliedCount = 0;
+
+    for (const tag of newTags) {
+        const ruleCategory = classifyTagByRules(tag);
+        if (ruleCategory) {
+            mapping[tag] = ruleCategory;
+            rulesAppliedCount++;
+        } else {
+            // Also check if the tag ITSELF is a master category
+            // e.g. "Science-Fiction" -> "Science-Fiction"
+            const normalizedTag = normalizeTag(tag);
+            const directMatch = PREFERRED_CATEGORIES.find(c => normalizeTag(c) === normalizedTag);
+            
+            if (directMatch) {
+                mapping[tag] = directMatch;
+                rulesAppliedCount++;
+            } else {
+                tagsToLearn.push(tag);
+            }
+        }
+    }
+
+    if (rulesAppliedCount > 0) {
+        console.log(`[Taxonomy] Auto-classified ${rulesAppliedCount} tags using rules/normalization.`);
+        // Save intermediate results
+        fs.writeFileSync(TAXONOMY_FILE, JSON.stringify(mapping, null, 2));
+    }
+    
+    if (tagsToLearn.length > 0) {
+        const totalGlobalTags = uniqueTags.length;
+        const knownTagsCount = totalGlobalTags - tagsToLearn.length;
         
-        // Process in batches of 20 to avoid overwhelming the LLM
-        const batches = chunkArray(newTags, 20);
+        console.log(`[Taxonomy] Learning ${tagsToLearn.length} new tags (Total: ${totalGlobalTags}, Known: ${knownTagsCount}).`);
+        
+        // Process in batches of 500 (Safe for 8k+ context models)
+        const batches = chunkArray(tagsToLearn, 500);
         
         for (let i = 0; i < batches.length; i++) {
             const batch = batches[i];
-            console.log(`[Taxonomy] Processing Batch ${i + 1}/${batches.length} (${batch.length} tags)...`);
+            const currentProcessed = knownTagsCount + (i * 500) + batch.length;
+            
+            console.log(`[Taxonomy] Processing Batch ${i + 1}/${batches.length} (${batch.length} tags) -> Global Progress: ${currentProcessed}/${totalGlobalTags}`);
+            
             onProgress({ 
                 type: 'progress_learning', 
-                current: i + 1, 
-                total: batches.length, 
-                tagsInBatch: batch.length 
+                currentBatch: i + 1, 
+                totalBatches: batches.length, 
+                tagsInBatch: batch.length,
+                processedGlobal: currentProcessed,
+                totalGlobal: totalGlobalTags
             });
             
             const batchMapping = await generateMapping(batch);
@@ -147,22 +250,25 @@ export async function syncAdaptiveTaxonomy(onProgress = () => {}) {
                 console.warn(`[Taxonomy] Batch ${i + 1} failed. Skipping.`);
             }
         }
-    } else {
-        console.log('[Taxonomy] No new tags to learn.');
     }
 
     // Apply mapping (existing + new) to all books
     console.log('[Taxonomy] Applying master tags to database...');
     onProgress({ type: 'phase_applying' });
 
-    const books = getAllBooks();
+    // OPTIMIZATION: Only fetch necessary columns, and only books with tags
+    const books = getBooksForTaxonomySync();
     const totalBooks = books.length;
     let processedBooks = 0;
     
+    // Load mapping ONCE for the entire batch to avoid 32k file reads
+    const finalMapping = getStoredMapping();
+    let updatedCount = 0;
+
     runTransaction(() => {
         for (const book of books) {
             processedBooks++;
-            if (processedBooks % 10 === 0 || processedBooks === totalBooks) {
+            if (processedBooks % 50 === 0 || processedBooks === totalBooks) {
                  onProgress({ 
                     type: 'progress_applying', 
                     current: processedBooks, 
@@ -170,39 +276,37 @@ export async function syncAdaptiveTaxonomy(onProgress = () => {}) {
                 });
             }
 
-            if (book.tags) {
-                // 1. Compute top Master Tags
-                const masterTagsStr = computeMasterTags(book.tags);
+            // 1. Compute top Master Tags (Passing mapping to avoid disk I/O)
+            const masterTagsStr = computeMasterTags(book.tags, finalMapping);
 
-                // 2. Identify Redundant Sub-Tags
-                const masterTagsList = masterTagsStr.split(',').map(t => t.trim());
-                const subTags = book.tags.split(',').map(t => t.trim());
-                
-                const filteredSubTags = subTags.filter(tag => {
-                    const normalizedTag = tag.toLowerCase().replace(/[^a-z0-9]/g, '');
-                    const isRedundant = masterTagsList.some(master => {
-                        const normalizedMaster = master.toLowerCase().replace(/[^a-z0-9]/g, '');
-                        return normalizedTag === normalizedMaster;
-                    });
-                    return !isRedundant;
+            // 2. Identify Redundant Sub-Tags
+            const masterTagsList = masterTagsStr.split(',').map(t => t.trim());
+            const subTags = book.tags.split(',').map(t => t.trim());
+            
+            const filteredSubTags = subTags.filter(tag => {
+                const normalizedTag = tag.toLowerCase().replace(/[^a-z0-9]/g, '');
+                const isRedundant = masterTagsList.some(master => {
+                    const normalizedMaster = master.toLowerCase().replace(/[^a-z0-9]/g, '');
+                    return normalizedTag === normalizedMaster;
                 });
-                
-                const newTagsStr = filteredSubTags.join(', ');
+                return !isRedundant;
+            });
+            
+            const newTagsStr = filteredSubTags.join(', ');
 
-                // 3. Update DB if Tags Changed
-                if (newTagsStr !== book.tags) {
-                    console.log(`[Taxonomy] Pruning redundant tags for ${path.basename(book.filepath)}: "${book.tags}" -> "${newTagsStr}"`);
-                    updateBookTags(book.filepath, newTagsStr);
-                }
-                
-                // 4. Update Master Tags (if changed)
-                const currentMasterTags = book.master_tags || '';
-                
-                if (currentMasterTags !== masterTagsStr) {
-                    console.log(`[Taxonomy] Updating ${path.basename(book.filepath)}: "${currentMasterTags}" -> "${masterTagsStr}"`);
-                    updateMasterTags(book.filepath, masterTagsStr);
-                    updatedCount++;
-                }
+            // 3. Update DB if Tags Changed
+            if (newTagsStr !== book.tags) {
+                // console.log(`[Taxonomy] Pruning ${path.basename(book.filepath)}`); // Silent for speed
+                updateBookTags(book.filepath, newTagsStr);
+            }
+            
+            // 4. Update Master Tags (if changed)
+            const currentMasterTags = book.master_tags || '';
+            
+            if (currentMasterTags !== masterTagsStr) {
+                // console.log(`[Taxonomy] Updating ${path.basename(book.filepath)}`); // Silent for speed
+                updateMasterTags(book.filepath, masterTagsStr);
+                updatedCount++;
             }
         }
     });
@@ -262,9 +366,9 @@ const CATEGORY_TYPE_MAP = {
  * 2. Determine if clearly Fiction or Non-Fiction based on top categories.
  * 3. Return: [Fiction/Non-Fiction], [Top Category 1], [Top Category 2]
  */
-export function computeMasterTags(tagsStr) {
+export function computeMasterTags(tagsStr, providedMapping = null) {
     if (!tagsStr) return '';
-    const mapping = getStoredMapping();
+    const mapping = providedMapping || getStoredMapping();
     
     // Create a normalized lookup map (lowercase, spaces to hyphens)
     const normalizedMapping = {};

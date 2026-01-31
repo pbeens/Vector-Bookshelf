@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 
 function App() {
   const [path, setPath] = useState('')
@@ -14,7 +14,16 @@ function App() {
     currentFile: ''
   })
   const [taggingStats, setTaggingStats] = useState({ processed: 0, total: 0, current: '' })
+  const [totalLibraryCount, setTotalLibraryCount] = useState(0)
   const [books, setBooks] = useState([])
+
+  // Taxonomy Doctor State
+  const [showTaxonomyDoctor, setShowTaxonomyDoctor] = useState(false)
+  const [doctorTag, setDoctorTag] = useState('')
+  const [doctorResult, setDoctorResult] = useState(null)
+  const [rulesContent, setRulesContent] = useState('')
+  const [showRulesEditor, setShowRulesEditor] = useState(false)
+  const [isEditingRules, setIsEditingRules] = useState(false)
 
   // Phase 1 UI improvements
   const [scanSectionCollapsed, setScanSectionCollapsed] = useState(() => {
@@ -48,6 +57,12 @@ function App() {
   // Search State
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
+  // FIX: Use ref to access latest search query inside long-running async closures
+  const searchRef = useRef(debouncedSearch)
+
+  useEffect(() => {
+    searchRef.current = debouncedSearch
+  }, [debouncedSearch])
 
   // Debounce Search
   useEffect(() => {
@@ -153,15 +168,44 @@ function App() {
   const fetchBooks = async () => {
     try {
       const query = new URLSearchParams()
-      if (debouncedSearch) query.append('q', debouncedSearch)
+      // FIX: Read from ref to avoid stale closure issues during long scans
+      if (searchRef.current) query.append('q', searchRef.current)
 
       const res = await fetch(`/api/books?${query.toString()}`)
+
+      const totalHeader = res.headers.get('X-Library-Size')
+      if (totalHeader) {
+        setTotalLibraryCount(parseInt(totalHeader, 10))
+      }
+
       const data = await res.json()
       setBooks(data)
     } catch (e) {
       console.error("Failed to fetch books", e)
     }
   }
+
+  useEffect(() => {
+    if (showTaxonomyDoctor) {
+      fetch('/api/taxonomy/rules')
+        .then(res => res.json())
+        .then(data => {
+          if (data.success) setRulesContent(data.content || '')
+        })
+        .catch(e => console.error("Failed to load rules", e))
+    }
+  }, [showTaxonomyDoctor])
+
+  useEffect(() => {
+    if (showRulesEditor) {
+      fetch('/api/taxonomy/rules')
+        .then(res => res.json())
+        .then(data => {
+          if (data.success) setRulesContent(data.content || '')
+        })
+        .catch(e => console.error("Failed to load rules", e))
+    }
+  }, [showRulesEditor])
 
   useEffect(() => {
     fetchBooks()
@@ -217,10 +261,25 @@ function App() {
 
 
   const startTagGeneration = async () => {
+    // Check if we are filtering
+    const hasFilters = activeTagFilters.length > 0 || activeAuthorFilters.length > 0 || searchQuery;
+    const targetFilepaths = hasFilters ? filteredBooks.map(b => b.filepath) : null;
+
+    if (hasFilters && targetFilepaths.length === 0) {
+      alert("No books match your filter!");
+      return;
+    }
+
+    if (hasFilters && !confirm(`Scan data for ${targetFilepaths.length} filtered books?`)) {
+      return;
+    }
+
     setIsProcessingContent(true)
     try {
       const response = await fetch('/api/books/process-content', {
-        method: 'POST'
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetFilepaths })
       })
 
       const reader = response.body.getReader()
@@ -326,22 +385,28 @@ function App() {
             const data = JSON.parse(line.slice(6))
 
             if (data.type === 'start') {
-              setTaxonomyStats({ state: 'learning', current: 0, total: 0, message: 'Learning existing taxonomy...' })
+              setTaxonomyStats({ state: 'learning', current: 0, total: 0, message: 'Analyzing existing taxonomy...' })
             } else if (data.type === 'progress_learning') {
+              // UX IMPROVEMENT: Show global tag progress (e.g. 4500/8000) instead of relative batches (1/8)
+              // If global stats are missing (backward compat), fall back to batches
+              const currentMsg = data.processedGlobal
+                ? `Learning tags... (${data.processedGlobal} / ${data.totalGlobal})`
+                : `Learning batch ${data.currentBatch}/${data.totalBatches}`;
+
               setTaxonomyStats({
                 state: 'learning',
-                current: data.current,
-                total: data.total,
-                message: `Learning batch ${data.current}/${data.total}`
+                current: data.processedGlobal || data.currentBatch,
+                total: data.totalGlobal || data.totalBatches,
+                message: currentMsg
               })
             } else if (data.type === 'phase_applying') {
-              setTaxonomyStats({ state: 'applying', current: 0, total: 0, message: 'Applying tags to books...' })
+              setTaxonomyStats({ state: 'applying', current: 0, total: 0, message: 'Applying tags to library...' })
             } else if (data.type === 'progress_applying') {
               setTaxonomyStats({
                 state: 'applying',
                 current: data.current,
                 total: data.total,
-                message: `Applying ${data.current}/${data.total}`
+                message: `Applying to book ${data.current} of ${data.total}`
               })
             } else if (data.type === 'complete') {
               setIsSyncingTaxonomy(false)
@@ -582,9 +647,9 @@ function App() {
                   >
                     + Add Books
                   </button>
-                  {books.length > 0 && (
+                  {totalLibraryCount > 0 && (
                     <span className="text-sm text-secondary">
-                      {books.length} books in library
+                      {totalLibraryCount} books in library
                     </span>
                   )}
                 </div>
@@ -680,7 +745,11 @@ function App() {
                       disabled={isProcessingMetadata || isProcessingContent || isSyncingTaxonomy || books.length === 0}
                       className={`px-6 py-2 rounded-lg font-medium border border-cyan-500/20 bg-cyan-950/20 text-cyan-400 hover:bg-cyan-500/10 ${isProcessingContent ? 'bg-neutral-800' : ''}`}
                     >
-                      {isProcessingContent ? `AI Data Scan: ${taggingStats.processed}/${taggingStats.total}` : 'AI Data Scan'}
+                      {isProcessingContent
+                        ? `AI Data Scan: ${taggingStats.processed}/${taggingStats.total}`
+                        : (activeTagFilters.length > 0 || activeAuthorFilters.length > 0 || searchQuery
+                          ? `Scan ${filteredBooks.length} Filtered`
+                          : 'AI Data Scan (All)')}
                     </button>
                     {isProcessingContent && (
                       <button
@@ -708,6 +777,16 @@ function App() {
                       </button>
                     )}
                   </div>
+
+                  <button
+                    onClick={() => setShowTaxonomyDoctor(true)}
+                    className="p-2 rounded-lg border border-purple-500/20 bg-purple-950/20 text-purple-400 hover:bg-purple-500/10 transition-colors"
+                    title="Taxonomy Doctor (Fix Tags)"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+                    </svg>
+                  </button>
 
                   <button
                     onClick={handleSyncTaxonomy}
@@ -758,6 +837,155 @@ function App() {
               </div>
             </div>
           </div>
+
+          {/* TAXONOMY DOCTOR MODAL */}
+          {showTaxonomyDoctor && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+              <div className="bg-neutral-900 border border-purple-500/30 rounded-2xl p-6 max-w-lg w-full shadow-2xl shadow-purple-900/20">
+                <div className="flex justify-between items-start mb-4">
+                  <div>
+                    <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                      <span className="text-purple-400">🩺</span> Taxonomy Doctor
+                    </h3>
+                    <p className="text-sm text-neutral-400 mt-1">Retroactively fix tags using your Rules.</p>
+                  </div>
+                  <button onClick={() => setShowTaxonomyDoctor(false)} className="text-neutral-500 hover:text-white">✕</button>
+                </div>
+
+
+                <div className="space-y-6 max-h-[70vh] overflow-y-auto pr-2">
+                  {/* Action 0: Rules Editor Link */}
+                  <div className="bg-black/40 p-4 rounded-xl border border-white/5 hover:border-r-purple-500/30 transition-colors flex justify-between items-center group cursor-pointer" onClick={() => setShowRulesEditor(true)}>
+                    <div>
+                      <h4 className="font-semibold text-white/90 group-hover:text-purple-300 transition-colors">Tagging Rules</h4>
+                      <p className="text-xs text-neutral-400">View and edit your context rules in a large window.</p>
+                    </div>
+                    <button
+                      className="bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded text-sm text-white transition-colors"
+                    >
+                      Open Editor ↗
+                    </button>
+                  </div>
+
+                  {/* Action 1: Apply Implications */}
+                  <div className="bg-black/40 p-4 rounded-xl border border-white/5 hover:border-purple-500/30 transition-colors">
+                    <h4 className="font-semibold text-purple-200 mb-2">1. Apply Automatic Hierarchies (Instant)</h4>
+                    <p className="text-xs text-neutral-400 mb-4">Good for strict parent/child rules (e.g. "ML ensures AI"). Does <strong>not</strong> re-read books. Safe and fast.</p>
+                    <button
+                      onClick={async () => {
+                        setDoctorResult('Running logic updates...');
+                        try {
+                          const res = await fetch('/api/taxonomy/apply-implications', { method: 'POST' });
+                          const data = await res.json();
+                          setDoctorResult(`Applied ${data.changes} logic fixes.\nRules: ${data.applied.join(', ') || 'None triggered'}`);
+                          fetchBooks(); // Refresh UI
+                        } catch (e) {
+                          setDoctorResult('Error: ' + e.message);
+                        }
+                      }}
+                      className="w-full bg-purple-900/30 hover:bg-purple-800/50 text-purple-300 py-2 rounded-lg border border-purple-500/20 transition-all font-medium"
+                    >
+                      Apply Hierarchies
+                    </button>
+                  </div>
+
+                  {/* Action 2: Re-Scan Tag */}
+                  <div className="bg-black/40 p-4 rounded-xl border border-white/5 hover:border-cyan-500/30 transition-colors">
+                    <h4 className="font-semibold text-cyan-200 mb-2">2. Fix Ambiguous Tags (Deep AI Re-Scan)</h4>
+                    <p className="text-xs text-neutral-400 mb-4">Use for context errors (e.g. "Python" Snake vs Code). <strong>Wipes metadata</strong> so the AI can re-read the book using your new Rules.</p>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="e.g. Python"
+                        value={doctorTag}
+                        onChange={(e) => setDoctorTag(e.target.value)}
+                        className="flex-1 bg-black/50 border border-white/10 rounded-lg px-3 text-sm text-white focus:border-cyan-500/50 outline-none"
+                      />
+                      <button
+                        onClick={async () => {
+                          if (!doctorTag) return;
+                          if (!confirm(`Are you sure you want to WIPEOUT metadata for all books tagged '${doctorTag}'? They will be re-scanned.`)) return;
+                          setDoctorResult(`Resetting '${doctorTag}'...`);
+                          try {
+                            const res = await fetch('/api/taxonomy/re-eval', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ tag: doctorTag })
+                            });
+                            const data = await res.json();
+                            setDoctorResult(`Reset ${data.count} books. Please run 'AI Data Scan' to process them.`);
+                            fetchBooks(); // Refresh UI
+                          } catch (e) {
+                            setDoctorResult('Error: ' + e.message);
+                          }
+                        }}
+                        className="bg-cyan-900/30 hover:bg-cyan-800/50 text-cyan-300 px-4 py-2 rounded-lg border border-cyan-500/20 transition-all font-medium"
+                      >
+                        Reset Tag
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Output Log */}
+                  {doctorResult && (
+                    <div className="bg-black p-3 rounded-lg border border-white/10 font-mono text-xs text-green-400 whitespace-pre-wrap">
+                      {doctorResult}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* LARGE RULES EDITOR MODAL */}
+          {showRulesEditor && (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+              <div className="bg-neutral-900 border border-purple-500/30 rounded-2xl w-[90vw] h-[85vh] shadow-2xl flex flex-col">
+                <div className="flex justify-between items-center p-6 border-b border-white/5">
+                  <div>
+                    <h3 className="text-2xl font-bold text-white flex items-center gap-3">
+                      <span className="text-purple-400">📝</span> Tagging Rules Editor
+                    </h3>
+                    <p className="text-sm text-neutral-400 mt-1">Edit `tagging_rules.md`. These rules are injected into the AI context.</p>
+                  </div>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={async () => {
+                        try {
+                          const res = await fetch('/api/taxonomy/rules', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ content: rulesContent })
+                          })
+                          const data = await res.json()
+                          if (data.success) {
+                            alert('Rules Saved!')
+                            setShowRulesEditor(false)
+                          } else {
+                            alert('Error saving: ' + data.error)
+                          }
+                        } catch (e) { alert('Error: ' + e.message) }
+                      }}
+                      className="bg-purple-600 hover:bg-purple-500 text-white px-6 py-2 rounded-lg font-bold transition-all shadow-lg shadow-purple-900/50"
+                    >
+                      Save Rules
+                    </button>
+                    <button onClick={() => setShowRulesEditor(false)} className="px-4 py-2 rounded-lg text-neutral-400 hover:bg-white/10 transition-colors">Cancel</button>
+                  </div>
+                </div>
+
+                <div className="flex-1 p-6 bg-black/50">
+                  <textarea
+                    value={rulesContent}
+                    onChange={(e) => setRulesContent(e.target.value)}
+                    className="w-full h-full bg-transparent border-none outline-none font-mono text-sm text-neutral-200 resize-none leading-relaxed"
+                    placeholder="# Write your tagging rules here..."
+                    spellCheck={false}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
 
 
           {/* Active Filter Chips */}

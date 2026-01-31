@@ -203,7 +203,7 @@ export function getBooksNeedingMetadata() {
 }
 
 export function getBooksNeedingContent(limit = 50) {
-    // Include books that either:
+// Include books that either:
     // 1. Haven't been scanned yet (content_scanned = 0)
     // 2. Were scanned but have no tags (failed scan)
     return db.prepare(`
@@ -213,6 +213,10 @@ export function getBooksNeedingContent(limit = 50) {
         AND (content_scanned = 0 OR tags IS NULL OR tags = '')
         LIMIT ?
     `).all(limit);
+}
+
+export function getBooksForTaxonomySync() {
+    return db.prepare("SELECT id, filepath, tags, master_tags FROM books WHERE tags IS NOT NULL AND tags != ''").all();
 }
 
 export default db;

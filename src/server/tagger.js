@@ -47,21 +47,25 @@ async function extractContentText(filepath) {
     
     if (ext === '.epub') {
         try {
-            // EPub.createAsync might throw synchronously or return rejected promise
-            // We wrap it to be safe
-            const epub = await EPub.createAsync(filepath).catch(err => { throw err; });
-            
-            let fullText = '';
-            // Get first few "chapters" (usually includes intro/preface)
-            for (let i = 0; i < Math.min(epub.flow.length, 5); i++) {
-                const chapter = await epub.getChapterRawAsync(epub.flow[i].id).catch(e => '');
-                // Simple HTML tag removal
-                if (chapter) {
-                    fullText += chapter.replace(/<[^>]*>?/gm, ' ') + ' ';
+            // TIMEOUT WRAPPER for EPUB Extraction
+            const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('EPUB Parsing Timed Out (15s)')), 15000)
+            );
+
+            const extractionPromise = (async () => {
+                const epub = await EPub.createAsync(filepath).catch(err => { throw err; });
+                let fullText = '';
+                for (let i = 0; i < Math.min(epub.flow.length, 5); i++) {
+                    const chapter = await epub.getChapterRawAsync(epub.flow[i].id).catch(e => '');
+                    if (chapter) {
+                        fullText += chapter.replace(/<[^>]*>?/gm, ' ') + ' ';
+                    }
+                    if (fullText.length > MAX_CONTENT_CHARS) break;
                 }
-                if (fullText.length > MAX_CONTENT_CHARS) break;
-            }
-            return fullText.substring(0, MAX_CONTENT_CHARS);
+                return fullText.substring(0, MAX_CONTENT_CHARS);
+            })();
+
+            return await Promise.race([extractionPromise, timeoutPromise]);
         } catch (err) {
             console.error(`[Tagger] EPUB Text Extraction Error (${filepath}):`, err.message);
             return null;
@@ -81,6 +85,20 @@ async function extractContentText(filepath) {
     return null;
 }
 
+const TAGGING_RULES_PATH = path.resolve('tagging_rules.md');
+
+function loadTaggingRules() {
+    try {
+        if (fs.existsSync(TAGGING_RULES_PATH)) {
+            console.log('[Tagger] Loaded custom tagging rules.');
+            return fs.readFileSync(TAGGING_RULES_PATH, 'utf-8');
+        }
+    } catch (e) {
+        console.error('[Tagger] Failed to load tagging rules:', e.message);
+    }
+    return '';
+}
+
 /**
  * Call LM Studio to get tags/summary
  */
@@ -93,6 +111,13 @@ async function getTagsFromAI(text) {
 
         console.error(`[Tagger] Calling LM Studio at ${LM_STUDIO_URL}...`);
         
+        // Inject Custom Rules
+        const customRules = loadTaggingRules();
+        let prompt = SYSTEM_PROMPT;
+        if (customRules) {
+            prompt += `\n\nCRITICAL USER DEFINED RULES:\n${customRules}\n\nStrictly follow the above rules when generating tags.`;
+        }
+        
         // Create abort controller for timeout
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout for debugging
@@ -102,12 +127,13 @@ async function getTagsFromAI(text) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                model: "model-identifier",
+                model: "local-model", // LM Studio ignores this, but required
                 messages: [
-                    { role: "system", content: SYSTEM_PROMPT },
-                    { role: "user", content: `Here is the book content:\n\n${text}` }
+                    { role: "system", content: prompt },
+                    { role: "user", content: `Book Excerpt:\n\n${text}` }
                 ],
-                temperature: 0.3
+                temperature: 0.3,
+                max_tokens: 500
             }),
             signal: controller.signal
         });
