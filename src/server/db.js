@@ -177,7 +177,7 @@ export const runTransaction = (fn) => {
  */
 export function updateBookManualMetadata(id, field, value) {
   // Allowlist fields for safety
-  const allowedFields = ['title', 'author'];
+  const allowedFields = ['title', 'author', 'publication_year'];
   if (!allowedFields.includes(field)) {
     throw new Error(`Invalid field: ${field}`);
   }

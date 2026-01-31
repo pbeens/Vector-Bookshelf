@@ -1,5 +1,19 @@
 # Changelog
 
+## [v0.6.1] - 2026-01-31
+
+### Added
+
+- **Sortable Columns**: Click table headers to sort by Title, Author, Year, or File (Asc/Desc).
+- **Year Interaction**:
+  - **Filter**: Click a year (e.g., 2023) to show only books from that year.
+  - **Edit**: Hover over the year column to manually edit the publication date.
+
+### Fixed
+
+- **UI Polish**: Removed browser-native spinner arrows from proper numeric inputs for a cleaner look.
+- **Filter Visibility**: Fixed an issue where the Year filter chip would not appear unless other filters were active.
+
 ## [v0.6.0] - 2026-01-31
 
 ### Added

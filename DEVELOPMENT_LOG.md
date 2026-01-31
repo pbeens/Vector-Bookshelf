@@ -1,5 +1,26 @@
 # Development Log
 
+## v0.6.1 - UI Power-Ups (2026-01-31)
+
+### Features Added
+
+- **Year Management**:
+  - **Filtering**: Click any year in the table (e.g., "1999") to filter the view to that specific year. Added a "Year" chip to the active filters bar.
+  - **Editing**: Hover over the Year cell to see the edit pencil. Allows manual correction of publication years directly in the table.
+- **Sortable Columns**:
+  - Added sorting support for **Title**, **Author**, **Year**, and **File** columns.
+  - Sorting is applied *after* filtering but *before* pagination, ensuring correct order across pages.
+  - Visual indicators (↑/↓) added to column headers.
+
+### Implementation Details
+
+- **Frontend**:
+  - Added `sortConfig` state to `App.jsx`.
+  - Updated `filteredBooks` memo to chain `.sort()` before pagination slice.
+  - Added `activeYearFilter` state and integrated it into the filter logic.
+- **Backend**:
+  - Updated `src/server/db.js` allowlist to include `publication_year` for manual updates.
+
 ## v0.6.0 - Taxonomy Doctor & Robustness (2026-01-31)
 
 ### Features Added

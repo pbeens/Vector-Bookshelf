@@ -32,6 +32,8 @@ function App() {
   })
   const [activeTagFilters, setActiveTagFilters] = useState([])
   const [activeAuthorFilters, setActiveAuthorFilters] = useState([])
+  const [activeYearFilter, setActiveYearFilter] = useState(null)
+  const [sortConfig, setSortConfig] = useState({ key: 'title', direction: 'asc' })
   const [hoveredRow, setHoveredRow] = useState(null)
   const [scanningBookId, setScanningBookId] = useState(null)
   const [syncingMetadataId, setSyncingMetadataId] = useState(null)
@@ -511,6 +513,7 @@ function App() {
   const clearAllFilters = () => {
     setActiveTagFilters([])
     setActiveAuthorFilters([])
+    setActiveYearFilter(null)
   }
 
   const parseAuthors = (authorStr) => {
@@ -560,7 +563,7 @@ function App() {
       }
     }
 
-    return matchesTags && matchesAuthors
+    return matchesTags && matchesAuthors && (!activeYearFilter || book.publication_year === activeYearFilter)
   })
 
 
@@ -587,16 +590,49 @@ function App() {
     }
   }
 
+  // Sorting Logic
+  const sortedBooks = [...filteredBooks].sort((a, b) => {
+    let aValue = a[sortConfig.key];
+    let bValue = b[sortConfig.key];
+
+    // Handle nulls
+    if (aValue === null || aValue === undefined) aValue = '';
+    if (bValue === null || bValue === undefined) bValue = '';
+
+    // Handle Strings (Case insensitive)
+    if (typeof aValue === 'string') aValue = aValue.toLowerCase();
+    if (typeof bValue === 'string') bValue = bValue.toLowerCase();
+
+    // Handle Numbers (Years)
+    if (sortConfig.key === 'publication_year') {
+      aValue = Number(aValue) || 0;
+      bValue = Number(bValue) || 0;
+    }
+
+    if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
+    if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
+    return 0;
+  });
+
   // Pagination calculations
-  const totalPages = Math.ceil(filteredBooks.length / itemsPerPage)
+  const totalPages = Math.ceil(sortedBooks.length / itemsPerPage)
   const startIndex = (currentPage - 1) * itemsPerPage
   const endIndex = startIndex + itemsPerPage
-  const paginatedBooks = filteredBooks.slice(startIndex, endIndex)
+  const paginatedBooks = sortedBooks.slice(startIndex, endIndex)
 
+  const requestSort = (key) => {
+    let direction = 'asc';
+    if (sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc';
+    }
+    setSortConfig({ key, direction });
+  };
+
+  // Reset to page 1 when filters change
   // Reset to page 1 when filters change
   useEffect(() => {
     setCurrentPage(1)
-  }, [activeTagFilters, activeAuthorFilters])
+  }, [activeTagFilters, activeAuthorFilters, activeYearFilter])
 
   // Auto-collapse scan section after successful scan
   useEffect(() => {
@@ -990,7 +1026,7 @@ function App() {
 
           {/* Active Filter Chips */}
           {
-            (activeTagFilters.length > 0 || activeAuthorFilters.length > 0) && (
+            (activeTagFilters.length > 0 || activeAuthorFilters.length > 0 || activeYearFilter) && (
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-sm text-secondary">Filtered by:</span>
 
@@ -1018,6 +1054,17 @@ function App() {
                   </button>
                 ))}
 
+                {/* Year Filter */}
+                {activeYearFilter && (
+                  <button
+                    onClick={() => setActiveYearFilter(null)}
+                    className="px-3 py-1 bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 rounded-full text-sm flex items-center gap-2 hover:bg-cyan-500/30 transition-colors"
+                  >
+                    <span className="text-[10px] uppercase opacity-70">Year:</span> {activeYearFilter}
+                    <span className="text-cyan-400">×</span>
+                  </button>
+                )}
+
                 <button
                   onClick={clearAllFilters}
                   className="text-sm text-secondary hover:text-white underline"
@@ -1030,7 +1077,7 @@ function App() {
 
           {/* Bulk Export Section */}
           {
-            (activeTagFilters.length > 0 || activeAuthorFilters.length > 0) && (
+            (activeTagFilters.length > 0 || activeAuthorFilters.length > 0 || activeYearFilter) && (
               <div className="flex items-center gap-3 p-4 bg-indigo-500/5 border border-indigo-500/10 rounded-xl mt-2 animate-in fade-in slide-in-from-top-2 duration-300">
                 <div className="text-secondary text-sm font-medium whitespace-nowrap">
                   Export {filteredBooks.length} books to:
@@ -1059,11 +1106,19 @@ function App() {
             <table className="w-full text-left text-sm" style={{ tableLayout: 'fixed' }}>
               <thead className="bg-white/5 text-secondary font-medium">
                 <tr>
-                  <th className="px-4 py-3" style={{ width: '30%' }}>Title</th>
-                  <th className="px-4 py-3 whitespace-nowrap" style={{ width: '10%' }}>Author</th>
+                  <th className="px-4 py-3 cursor-pointer hover:text-white transition-colors group" style={{ width: '30%' }} onClick={() => requestSort('title')}>
+                    Title {sortConfig.key === 'title' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                  </th>
+                  <th className="px-4 py-3 whitespace-nowrap cursor-pointer hover:text-white transition-colors group" style={{ width: '10%' }} onClick={() => requestSort('author')}>
+                    Author {sortConfig.key === 'author' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                  </th>
                   <th className="px-4 py-3" style={{ width: '35%' }}>Tags</th>
-                  <th className="px-4 py-3 whitespace-nowrap" style={{ width: '5%' }}>Year</th>
-                  <th className="px-4 py-3" style={{ width: '20%' }}>File</th>
+                  <th className="px-4 py-3 whitespace-nowrap cursor-pointer hover:text-white transition-colors group" style={{ width: '5%' }} onClick={() => requestSort('publication_year')}>
+                    Year {sortConfig.key === 'publication_year' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                  </th>
+                  <th className="px-4 py-3 cursor-pointer hover:text-white transition-colors group" style={{ width: '20%' }} onClick={() => requestSort('filepath')}>
+                    File {sortConfig.key === 'filepath' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
@@ -1253,7 +1308,45 @@ function App() {
                       </div>
                     </td>
                     <td className="px-4 py-3 text-neutral-400 whitespace-nowrap">
-                      {book.publication_year || '-'}
+                      <div className="relative group flex items-center gap-2">
+                        {editingCell?.id === book.id && editingCell?.field === 'publication_year' ? (
+                          <input
+                            autoFocus
+                            defaultValue={book.publication_year}
+                            type="text"
+                            pattern="\d*"
+                            className="bg-neutral-800 border border-indigo-500 rounded px-2 py-1 text-white text-sm w-20 text-center"
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleManualUpdate(book.id, 'publication_year', parseInt(e.target.value) || null);
+                              if (e.key === 'Escape') setEditingCell(null);
+                            }}
+                            onBlur={(e) => handleManualUpdate(book.id, 'publication_year', parseInt(e.target.value) || null)}
+                          />
+                        ) : (
+                          <>
+                            {book.publication_year ? (
+                              <button
+                                onClick={() => setActiveYearFilter(book.publication_year)}
+                                className={`hover:text-cyan-300 hover:underline transition-colors ${activeYearFilter === book.publication_year ? 'text-cyan-400 font-bold underline' : ''}`}
+                                title="Filter by this Year"
+                              >
+                                {book.publication_year}
+                              </button>
+                            ) : '-'}
+
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setEditingCell({ id: book.id, field: 'publication_year' });
+                              }}
+                              className="opacity-0 group-hover:opacity-100 text-neutral-500 hover:text-white transition-opacity px-1"
+                              title="Edit Year"
+                            >
+                              ✎
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-white font-mono text-[11px] break-words relative group">
                       <div className="flex items-center gap-2">
