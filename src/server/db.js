@@ -219,4 +219,14 @@ export function getBooksForTaxonomySync() {
     return db.prepare("SELECT id, filepath, tags, master_tags FROM books WHERE tags IS NOT NULL AND tags != ''").all();
 }
 
+/**
+ * Delete a book by its filepath.
+ * @param {string} filepath 
+ */
+export function deleteBook(filepath) {
+    const del = db.prepare('DELETE FROM books WHERE filepath = ?');
+    const info = del.run(filepath);
+    return info.changes > 0;
+}
+
 export default db;

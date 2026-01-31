@@ -1,5 +1,27 @@
 # Development Log
 
+## v0.7.0 - Utilities & Maintenance (2026-01-31)
+
+### Features Added
+
+- **Utilities Framework**:
+  - Implemented a backend module loader `src/server/utilities/manager.js` to dynamically load utility scripts.
+  - Created a standardized interface for utilities (`metadata`, `scan`, `process`).
+- **Missing Book Cleaner**:
+  - Scans the database for file paths that do not exist on disk.
+  - Allows bulk deletion of "Ghost Books".
+- **Progress Reporting**:
+  - Implemented Server-Sent Events (SSE) for utility scans.
+  - Added a visual progress bar to the Frontend Utilities UI.
+
+### Implementation Details
+
+- **Backend**:
+  - Refactored `index.js` to delegate utility management to a dedicated manager.
+  - Updates `missing_books.js` to support synchronous progress callbacks during the file check loop.
+- **Frontend**:
+  - `Utilities.jsx` now consumes `text/event-stream` responses to update the UI in real-time without polling.
+
 ## v0.6.1 - UI Power-Ups (2026-01-31)
 
 ### Features Added

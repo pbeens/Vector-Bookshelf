@@ -1,5 +1,13 @@
 # Changelog
 
+## [v0.7.0] - 2026-01-31
+
+### Added
+
+- **Utilities Framework**: A new extensible system for administrative tasks.
+- **Missing Book Cleaner**: A utility to scan for and remove books from the database that no longer exist on the file system.
+- **Progress Reporting**: Real-time progress bars for long-running utility scans.
+
 ## [v0.6.1] - 2026-01-31
 
 ### Added

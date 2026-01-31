@@ -695,6 +695,72 @@ app.post('/api/taxonomy/rules', (req, res) => {
     }
 });
 
+// --- UTILITIES FRAMEWORK ---
+
+// --- UTILITIES FRAMEWORK ---
+import { loadUtilities as initUtilities, getUtility, getAllUtilities } from './utilities/manager.js';
+
+// Load on startup
+initUtilities();
+
+// List Utilities
+app.get('/api/utilities', (req, res) => {
+    res.json({ success: true, utilities: getAllUtilities() });
+});
+
+// Run Utility Scan
+app.post('/api/utilities/:id/scan', async (req, res) => {
+    const { id } = req.params;
+    const utility = getUtility(id);
+
+    if (!utility) return res.status(404).json({ error: 'Utility not found' });
+    if (!utility.scan) return res.status(400).json({ error: 'Utility does not support scanning' });
+
+    // Setup SSE headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    try {
+        console.log(`[Utilities] Scanning ${id}...`);
+        
+        // Pass onProgress callback
+        const result = await utility.scan({ 
+            ...req.body,
+            onProgress: (stats) => {
+                res.write(`data: ${JSON.stringify({ type: 'progress', ...stats })}\n\n`);
+            }
+        });
+
+        res.write(`data: ${JSON.stringify({ type: 'complete', result })}\n\n`);
+        res.end();
+    } catch (e) {
+        console.error(`[Utilities] Scan error for ${id}:`, e);
+        try {
+            res.write(`data: ${JSON.stringify({ type: 'error', message: e.message })}\n\n`);
+            res.end();
+        } catch (ignore) {}
+    }
+});
+
+// Run Utility Execution
+app.post('/api/utilities/:id/run', async (req, res) => {
+    const { id } = req.params;
+    const utility = getUtility(id);
+
+    if (!utility) return res.status(404).json({ error: 'Utility not found' });
+    if (!utility.process) return res.status(400).json({ error: 'Utility does not support execution' });
+
+    try {
+        console.log(`[Utilities] Executing ${id}...`);
+        const result = await utility.process(req.body);
+        res.json({ success: true, result });
+    } catch (e) {
+        console.error(`[Utilities] Execution error for ${id}:`, e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 
 app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
