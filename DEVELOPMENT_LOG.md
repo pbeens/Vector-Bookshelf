@@ -1,5 +1,13 @@
 # Development Log
 
+## v0.7.1a - Scanning Fixes (2026-01-31)
+
+### Fixed
+
+- **Filtered Scan**:
+  - Fixed logic preventing retry of "Error" items when scanning a filtered selection.
+  - Increased `express.json` limit to **50MB** to handle large `targetFilepaths` arrays (previously failing on >800 items).
+
 ## v0.7.1 - AI Scan ETA (2026-01-31)
 
 ### Features Added

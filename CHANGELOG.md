@@ -1,5 +1,13 @@
 # Changelog
 
+## [v0.7.1a] - 2026-01-31
+
+### Fixed
+
+- **Filtered Scan**:
+  - Scanning a filtered list now correctly forces a re-scan of "Error" or "Skipped" items, allowing retry of failed books.
+  - Increased server payload limit to 50MB to prevent crashes when scanning large filtered sets (e.g., 900+ items).
+
 ## [v0.7.1] - 2026-01-31
 
 ### Added
