@@ -1,5 +1,23 @@
 # Development Log
 
+## v0.7.1 - AI Scan ETA (2026-01-31)
+
+### Features Added
+
+- **AI Scan ETA**:
+  - Shows estimated time remaining for AI scanning operations.
+  - Calculation based on rolling average of processed items vs total.
+  - Persists across page reloads by syncing with server state.
+
+### Implementation Details
+
+- **Backend**:
+  - `scanState` now tracks `startTime`.
+  - `/api/scan/status` and SSE events include `startTime` payload.
+- **Frontend**:
+  - `App.jsx` calculates ETA: `(Total - Processed) * (Elapsed / Processed)`.
+  - Added robust fallback: if SSE reconnects or polling runs, it uses the server's `startTime` instead of resetting to `Date.now()`.
+
 ## v0.7.0 - Utilities & Maintenance (2026-01-31)
 
 ### Features Added

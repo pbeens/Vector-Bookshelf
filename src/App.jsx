@@ -125,10 +125,29 @@ function App() {
         if (data.active) {
           // If backend says active but frontend didn't know, Update UI
           setIsProcessingContent(true);
+          // Calculate ETA if possible
+          let etaMsg = '';
+          if (data.startTime && data.processed > 0) {
+            const now = Date.now();
+            const elapsed = now - data.startTime;
+            const msPerBook = elapsed / data.processed;
+            const remaining = data.total - data.processed;
+            const etaMs = remaining * msPerBook;
+
+            const hours = Math.floor(etaMs / 3600000);
+            const minutes = Math.floor((etaMs % 3600000) / 60000);
+            const seconds = Math.floor((etaMs % 60000) / 1000);
+
+            if (hours > 0) etaMsg = `ETA: ${hours}h ${minutes}m`;
+            else etaMsg = `ETA: ${minutes}m ${seconds}s`;
+          }
+
           setTaggingStats({
             processed: data.processed,
             total: data.total,
-            current: data.currentFile || 'Processing...'
+            current: data.currentFile || 'Processing...',
+            startTime: data.startTime,
+            eta: etaMsg
           });
         } else if (isProcessingContent && !data.active) {
           // Backend finished but UI still thinks it's running? 
@@ -301,12 +320,36 @@ function App() {
             const data = JSON.parse(line.slice(6))
 
             if (data.type === 'start') {
-              setTaggingStats({ processed: 0, total: data.total, current: 'Starting AI analysis...' })
+              setTaggingStats({ processed: 0, total: data.total, current: 'Starting AI analysis...', startTime: Date.now() })
             } else if (data.type === 'progress') {
-              setTaggingStats({
-                processed: data.processed,
-                total: data.total,
-                current: data.current
+              setTaggingStats(prev => {
+                // Use server start time if available (robustness), else local state, else now
+                const startTime = data.startTime || prev.startTime || Date.now();
+                const now = Date.now();
+                const elapsed = now - startTime;
+
+                // Calculate ETA
+                let etaMsg = '';
+                if (data.processed > 0) {
+                  const msPerBook = elapsed / data.processed;
+                  const remaining = data.total - data.processed;
+                  const etaMs = remaining * msPerBook;
+
+                  const hours = Math.floor(etaMs / 3600000);
+                  const minutes = Math.floor((etaMs % 3600000) / 60000);
+                  const seconds = Math.floor((etaMs % 60000) / 1000);
+
+                  if (hours > 0) etaMsg = `ETA: ${hours}h ${minutes}m`;
+                  else etaMsg = `ETA: ${minutes}m ${seconds}s`;
+                }
+
+                return {
+                  processed: data.processed,
+                  total: data.total,
+                  current: data.current,
+                  startTime: startTime,
+                  eta: etaMsg
+                };
               })
               fetchBooks() // Refresh list after each book
             } else if (data.type === 'complete') {
@@ -796,7 +839,7 @@ function App() {
                           className={`px-6 py-2 rounded-lg font-medium border border-cyan-500/20 bg-cyan-950/20 text-cyan-400 hover:bg-cyan-500/10 ${isProcessingContent ? 'bg-neutral-800' : ''}`}
                         >
                           {isProcessingContent
-                            ? `AI Data Scan: ${taggingStats.processed}/${taggingStats.total}`
+                            ? `AI Data Scan: ${taggingStats.processed}/${taggingStats.total} ${taggingStats.eta ? `(${taggingStats.eta})` : ''}`
                             : (activeTagFilters.length > 0 || activeAuthorFilters.length > 0 || searchQuery
                               ? `Scan ${filteredBooks.length} Filtered`
                               : 'AI Data Scan (All)')}

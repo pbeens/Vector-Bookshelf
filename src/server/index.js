@@ -522,6 +522,7 @@ app.post('/api/books/process-content', async (req, res) => {
                             processed: scanState.processed, 
                             total: scanState.total, 
                             current: scanState.currentFile,
+                            startTime: scanState.startTime,
                             tags: tagsToSend
                         })}\n\n`);
                     } catch (writeErr) { }

@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.7.1] - 2026-01-31
+
+### Added
+
+- **AI Scan ETA**: Real-time Estimated Time Remaining display for AI scanning operations.
+- **Robustness**: Improved scan state synchronization to prevent "disappearing" status on page refresh.
+
 ## [v0.7.0] - 2026-01-31
 
 ### Added
