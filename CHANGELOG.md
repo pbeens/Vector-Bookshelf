@@ -1,5 +1,13 @@
 # Changelog
 
+## [v0.7.1b] - 2026-01-31
+
+### Fixed
+
+- **Missing Book Cleaner**:
+  - Fixed "System Offline" and missing progress updates during scan.
+  - Scan loop now yields to the event loop, preventing server lockup.
+
 ## [v0.7.1a] - 2026-01-31
 
 ### Fixed

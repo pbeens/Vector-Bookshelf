@@ -36,6 +36,8 @@ export async function scan(args = {}) {
 
         if (onProgress && i % 50 === 0) {
             onProgress({ processed: i + 1, total, current: book.filepath });
+            // Yield to event loop to allow health checks and SSE to pass through
+            await new Promise(resolve => setImmediate(resolve));
         }
     }
     

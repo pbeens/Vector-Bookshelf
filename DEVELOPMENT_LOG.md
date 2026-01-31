@@ -1,5 +1,11 @@
 # Development Log
 
+## v0.7.1b - Missing Book Cleaner Fix (2026-01-31)
+
+### Fixed
+
+- **Event Loop Blocking**: The missing book scanner was running a tight synchronous loop, causing the server to stop responding to health checks. Added `setImmediate` yields every 50 items.
+
 ## v0.7.1a - Scanning Fixes (2026-01-31)
 
 ### Fixed
