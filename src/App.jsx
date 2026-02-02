@@ -934,8 +934,8 @@ function App() {
                       <button
                         onClick={handleSyncTaxonomy}
                         disabled={isSyncingTaxonomy || isScanning || isProcessingContent || books.length === 0}
-                        className={`relative px-4 py-2 rounded-lg font-medium border transition-all ${isSyncingTaxonomy ? 'bg-neutral-900 border-neutral-700 text-amber-400' : 'border-amber-500/20 bg-amber-100 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400 hover:bg-amber-200 dark:hover:bg-amber-500/10'} ${!isSyncingTaxonomy && books.some(b => b.tags && !b.master_tags) ? 'ring-1 ring-amber-500' : ''}`}
-                        title="AI groups your tags into categories"
+                        className={`relative px-4 py-2 rounded-lg font-medium border transition-all disabled:opacity-50 disabled:cursor-not-allowed ${isSyncingTaxonomy ? 'bg-neutral-900 border-neutral-700 text-amber-400' : 'border-amber-500/20 bg-amber-100 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400 hover:bg-amber-200 dark:hover:bg-amber-500/10'} ${!isSyncingTaxonomy && books.some(b => b.tags && !b.master_tags) ? 'ring-1 ring-amber-500' : ''}`}
+                        title={isProcessingContent ? "Unavailable during AI Scan" : (isScanning ? "Unavailable during Library Scan" : "AI groups your tags into categories")}
                       >
                         {isSyncingTaxonomy ? (taxonomyStats.message || 'Syncing...') : 'Rescan Categories'}
                       </button>

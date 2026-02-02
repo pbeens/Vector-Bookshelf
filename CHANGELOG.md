@@ -1,5 +1,20 @@
 # Changelog
 
+## [v0.7.6] - 2026-02-02
+
+### Added
+
+- **Audible Alerts**:
+  - Implemented a soft "Sine Bell" sound that plays when any scan (AI or Library) completes successfully.
+- **UX Polish**:
+  - **Rescan Categories Button**: Added visual "Disabled" state (opacity/cursor) and informative tooltips to explain why it's unavailable during active scans.
+
+### Changed
+
+- **Refactoring**:
+  - Moved all local test/debug scripts (`debug*.js`, `check*.js`, etc.) to a dedicated `test_programs/` folder to clean up the project root.
+  - Updated configuration to ignore these moved scripts while tracking the folder structure.
+
 ## [v0.7.5] - 2026-02-02
 
 ### Added

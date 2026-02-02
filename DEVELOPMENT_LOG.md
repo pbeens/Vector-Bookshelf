@@ -1,5 +1,26 @@
 # Development Log
 
+## v0.7.6 - Audio & Refactoring (2026-02-02)
+
+### Features Added
+
+- **Audible Completion Alerts**:
+  - Integrated `AudioContext` API to play a gentle "Sine Bell" when long-running scans finish.
+  - Helps users know when to return to the tab without needing to watch the progress bar.
+
+### User Experience
+
+- **Disabled State Polish**:
+  - The "Rescan Categories" button now properly fades out and shows a "not allowed" cursor when disabled.
+  - Added dynamic tooltips to explain *why* the action is disabled (e.g., "Unavailable during AI Scan").
+
+### Maintenance
+
+- **Project Structure**:
+  - Moved 10+ loose script files (debug/test utilities) into `test_programs/`.
+  - Updated relative imports in all moved scripts to ensure they still function.
+  - Kept project root clean for better developer experience.
+
 ## v0.7.5 - UX Polish & Cleanup (2026-02-02)
 
 ### Features Added
