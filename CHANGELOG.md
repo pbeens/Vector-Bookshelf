@@ -1,5 +1,19 @@
 # Changelog
 
+## [v0.7.5] - 2026-02-02
+
+### Added
+
+- **Scan Completion Indicator**:
+  - "**Scan Complete**" Visuals: Scan buttons now turn Emerald Green upon completion.
+  - **Interaction**: Clicking the green button clears the status and resets it to "Scan".
+  - Applied to both **AI Data Scan** (Main UI) and **Scan Library** (Utilities).
+
+### Changed
+
+- **Development**:
+  - Updated `.gitignore` to exclude local debug scripts (`debug*.js`, `check*.js`, `test*.js`).
+
 ## [v0.7.4] - 2026-02-01
 
 ### Added

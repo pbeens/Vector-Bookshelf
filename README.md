@@ -56,6 +56,7 @@ The system operates in **Phases** to ensure performance and data integrity.
 - **Real-time Stats:** Live tracking of detected files, added books, metadata extraction, and failures.
 - **Glassmorphism UI:** Modern, premium aesthetic with smooth transitions and stable layouts.
 - **AI Context Indicator:** Live display of the active context size (e.g., "8192 active ctx") to monitor VRAM usage.
+- **Scan Completion Indicators:** Visual feedback (Green/Emerald buttons) when scans finish, with click-to-clear interaction.
 
 ## 🧹 Maintenance Commands
 

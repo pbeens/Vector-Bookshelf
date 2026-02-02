@@ -198,10 +198,15 @@ export default function Utilities({ scanProps }) {
                                         />
                                         <button
                                             onClick={scanProps.startScan}
-                                            disabled={scanProps.isScanning || !scanProps.path}
-                                            className={`px-6 py-3 rounded-lg font-bold transition-all ${scanProps.isScanning ? 'bg-neutral-800' : 'bg-primary hover:bg-indigo-500 text-white'}`}
+                                            disabled={scanProps.isScanning || (!scanProps.scanComplete && !scanProps.path)}
+                                            className={`px-6 py-3 rounded-lg font-bold transition-all 
+                                                ${scanProps.isScanning
+                                                    ? 'bg-neutral-800'
+                                                    : scanProps.scanComplete
+                                                        ? 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/20'
+                                                        : 'bg-primary hover:bg-indigo-500 text-white'}`}
                                         >
-                                            {scanProps.isScanning ? 'Scanning...' : 'Scan Library'}
+                                            {scanProps.isScanning ? 'Scanning...' : (scanProps.scanComplete ? 'Scan Complete (Clear)' : 'Scan Library')}
                                         </button>
                                     </div>
 

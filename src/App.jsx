@@ -43,6 +43,8 @@ function App() {
   const [isScanning, setIsScanning] = useState(false)
   const [isProcessingMetadata, setIsProcessingMetadata] = useState(false)
   const [isProcessingContent, setIsProcessingContent] = useState(false)
+  const [aiScanComplete, setAiScanComplete] = useState(false)
+  const [basicScanComplete, setBasicScanComplete] = useState(false)
   const [stats, setStats] = useState({
     found: 0,
     added: 0,
@@ -310,6 +312,10 @@ function App() {
   }, [])
 
   const startScan = async () => {
+    if (basicScanComplete) {
+      setBasicScanComplete(false)
+      return
+    }
     if (!path) return
     setIsScanning(true)
     setStats({ found: 0, added: 0, skipped: 0, currentFile: 'Starting...' })
@@ -333,6 +339,7 @@ function App() {
           })
         } else if (data.type === 'complete') {
           setIsScanning(false)
+          setBasicScanComplete(true)
           fetchBooks() // Refresh list
         }
       }, (err) => {
@@ -347,6 +354,11 @@ function App() {
 
 
   const startTagGeneration = async () => {
+    if (aiScanComplete) {
+      setAiScanComplete(false)
+      return
+    }
+
     // Check if we are filtering
     const hasFilters = activeTagFilters.length > 0 || activeAuthorFilters.length > 0 || searchQuery || activeYearFilter;
     const targetFilepaths = hasFilters ? filteredBooks.map(b => b.filepath) : null;
@@ -400,6 +412,7 @@ function App() {
           fetchBooks()
         } else if (data.type === 'complete') {
           setIsProcessingContent(false)
+          setAiScanComplete(true)
           fetchBooks()
         }
       }, (err) => {
@@ -827,7 +840,10 @@ function App() {
                 setPath,
                 startScan,
                 isScanning,
-                stats
+                startScan,
+                isScanning,
+                stats,
+                scanComplete: basicScanComplete
               }}
             />
           ) : (
@@ -850,8 +866,13 @@ function App() {
                       <div className="flex gap-2 items-center">
                         <button
                           onClick={startTagGeneration}
-                          disabled={isProcessingMetadata || isProcessingContent || isSyncingTaxonomy || books.length === 0}
-                          className={`px-6 py-2 rounded-lg font-medium border transition-all ${isProcessingContent ? 'bg-neutral-900 border-neutral-700 text-cyan-400' : 'border-cyan-500/20 bg-cyan-100 dark:bg-cyan-950/20 text-cyan-700 dark:text-cyan-400 hover:bg-cyan-200 dark:hover:bg-cyan-500/10'}`}
+                          disabled={isProcessingMetadata || isProcessingContent || (isSyncingTaxonomy && !aiScanComplete) || books.length === 0}
+                          className={`px-6 py-2 rounded-lg font-medium border transition-all 
+                            ${isProcessingContent
+                              ? 'bg-neutral-900 border-neutral-700 text-cyan-400'
+                              : aiScanComplete
+                                ? 'bg-emerald-500 hover:bg-emerald-600 text-white border-emerald-600 shadow-lg shadow-emerald-500/20'
+                                : 'border-cyan-500/20 bg-cyan-100 dark:bg-cyan-950/20 text-cyan-700 dark:text-cyan-400 hover:bg-cyan-200 dark:hover:bg-cyan-500/10'}`}
                         >
                           {isProcessingContent
                             ? (
@@ -867,8 +888,8 @@ function App() {
                               </div>
                             )
                             : (activeTagFilters.length > 0 || activeAuthorFilters.length > 0 || searchQuery || activeYearFilter
-                              ? `Scan ${filteredBooks.length} Filtered`
-                              : 'AI Data Scan (All)')}
+                              ? (aiScanComplete ? 'Scan Complete (Click to clear)' : `Scan ${filteredBooks.length} Filtered`)
+                              : (aiScanComplete ? 'Scan Complete (Click to clear)' : 'AI Data Scan (All)'))}
                         </button>
                         {isProcessingContent && (
                           <button

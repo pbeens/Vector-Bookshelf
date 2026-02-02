@@ -1,5 +1,19 @@
 # Development Log
 
+## v0.7.5 - UX Polish & Cleanup (2026-02-02)
+
+### Features Added
+
+- **Scan Completion Indicators**:
+  - Implemented visual feedback for successful scans. Buttons now turn green and display "Scan Complete".
+  - Created a "Click to Clear" interaction pattern to reset the button state without reloading.
+  - Applied to main `App.jsx` (AI Scan) and `Utilities.jsx` (File Scan).
+
+### Maintenance
+
+- **Git Hygiene**:
+  - Updated `.gitignore` to explicitly exclude `debug*.js`, `check*.js`, and `test*.js` to prevent clutter from local verification scripts.
+
 ## v0.7.4 - UI Polishing & Theming (2026-02-01)
 
 ### Features Added
