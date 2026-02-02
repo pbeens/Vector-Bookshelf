@@ -1,10 +1,10 @@
 import fs from 'fs';
 import path from 'path';
 import { getAllBooks, getBooksForTaxonomySync, updateMasterTags, updateBookTags, runTransaction } from './db.js';
+import { getActiveModelPath } from './config.js';
+import { getLlamaManager } from './tagger.js';
 
 const TAXONOMY_FILE = path.resolve('taxonomy.json');
-
-const LM_STUDIO_URL = 'http://localhost:1234/v1/chat/completions';
 
 /**
  * Gets all unique non-master tags from the database
@@ -91,6 +91,15 @@ function classifyTagByRules(tag) {
 }
 
 /**
+ * Singleton manager for local Llama instance in Taxonomy
+ * (Ideally this would be shared with tagger.js)
+ */
+// variables managed in tagger.js
+
+// getLlamaManager imported from tagger.js
+
+
+/**
  * Ask AI to group tags into high-level master categories
  */
 async function generateMapping(uniqueTags) {
@@ -120,24 +129,34 @@ async function generateMapping(uniqueTags) {
     }
     `;
 
+    const modelPath = getActiveModelPath();
+    if (!modelPath) {
+        console.error("[Taxonomy] No local model selected.");
+        return null;
+    }
+
     try {
-        const response = await fetch(LM_STUDIO_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                model: "model-identifier", // LM Studio ignores this but needs it
-                messages: [
-                    { role: "system", content: "You are a data classification expert." },
-                    { role: "user", content: prompt }
-                ],
-                temperature: 0.1
-            })
+        const { context } = await getLlamaManager(modelPath);
+        const { LlamaChatSession } = await import('node-llama-cpp');
+        
+        const session = new LlamaChatSession({ 
+            contextSequence: context.getSequence(),
+            systemPrompt: "You are a data classification expert."
         });
 
-        const data = await response.json();
-        const content = data.choices[0].message.content;
-        const jsonStr = content.match(/\{[\s\S]*\}/)?.[0] || content;
-        return JSON.parse(jsonStr);
+        console.log('[Taxonomy-Llama] Generating mapping...');
+        const response = await session.prompt(prompt, {
+            grammar: await llamaInstance.getGrammarFor("json"),
+            maxTokens: 1000,
+            temperature: 0.1
+        });
+
+        try {
+            return JSON.parse(response);
+        } catch (e) {
+            console.error("[Taxonomy-Llama] Invalid JSON:", response);
+            return null;
+        }
     } catch (err) {
         console.error("[Taxonomy] AI Error:", err.message);
         return null;

@@ -5,38 +5,30 @@
   line-height: 1.5;
   font-weight: 400;
 
+  /* Default to Light Mode */
+  color-scheme: light;
+  --color-background: #f8fafc; /* slate-50 */
+  --color-surface: #ffffff;
+  --color-primary: #6366f1;
+  --color-secondary: #64748b; /* slate-500 */
+  --color-text-main: #0f172a; /* slate-900 */
+}
+
+/* Dark Mode Overrides */
+.dark {
   color-scheme: dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #0a0a0a;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-body {
-  margin: 0;
-  display: block;
-  min-width: 320px;
-  min-height: 100vh;
-}
-
-table {
-  table-layout: fixed !important;
-}
-
-th {
-  resize: horizontal;
-  overflow: auto;
-  position: relative;
+  --color-background: #0a0a0a; /* neutral-950 */
+  --color-surface: #171717;     /* neutral-900 */
+  --color-primary: #818cf8;     /* indigo-400 */
+  --color-secondary: #94a3b8;   /* slate-400 */
+  --color-text-main: #f8fafc;   /* slate-50 */
 }
 
 @theme {
-  --color-background: #0a0a0a;
-  --color-surface: #171717;
-  --color-primary: #6366f1;
-  --color-secondary: #94a3b8;
+  --color-background: var(--color-background);
+  --color-surface: var(--color-surface);
+  --color-primary: var(--color-primary);
+  --color-secondary: var(--color-secondary);
 }
 
 /* Phase 1 UI Improvements */

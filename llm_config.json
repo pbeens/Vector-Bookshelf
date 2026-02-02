@@ -1,0 +1,17 @@
+{
+  "models_dir": "D:\\My Documents\\GitHub\\Vector-Bookshelf\\models",
+  "active_model": "D:\\My Documents\\GitHub\\Vector-Bookshelf\\models\\Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+  "current": "built_in",
+  "servers": {
+    "lm_studio": {
+      "name": "LM Studio (Local)",
+      "url": "http://localhost:1234/v1/chat/completions",
+      "model": "local-model"
+    },
+    "built_in": {
+      "name": "llama.cpp (Embedded)",
+      "type": "built_in",
+      "modelPath": "D:\\My Documents\\GitHub\\Vector-Bookshelf\\models\\Llama-3.2-3B-Instruct-Q4_K_M.gguf"
+    }
+  }
+}

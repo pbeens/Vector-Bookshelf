@@ -1,7 +1,7 @@
 {
   "name": "vector-bookshelf",
   "private": true,
-  "version": "0.7.1b",
+  "version": "0.7.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -15,6 +15,7 @@
     "cors": "^2.8.6",
     "epub2": "^3.0.2",
     "express": "^5.2.1",
+    "node-llama-cpp": "^3.15.1",
     "pdf-parse": "^2.4.5",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"

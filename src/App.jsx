@@ -1,6 +1,43 @@
 import { useState, useEffect, useRef } from 'react'
 import Utilities from './components/Utilities'
 
+// Helper for robust SSE parsing
+const processSSEStream = async (response, onData, onError) => {
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+
+      // Split by double newline which marks end of SSE event
+      const parts = buffer.split('\n\n')
+
+      // Keep the last part in buffer as it might be incomplete
+      buffer = parts.pop()
+
+      for (const part of parts) {
+        const line = part.trim()
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6))
+            onData(data)
+          } catch (e) {
+            console.warn('Failed to parse SSE chunk:', e)
+          }
+        }
+      }
+    }
+  } catch (error) {
+    if (onError) onError(error)
+    else console.error('Stream processing failed', error)
+  }
+}
+
 function App() {
   const [path, setPath] = useState('')
   const [isScanning, setIsScanning] = useState(false)
@@ -50,6 +87,9 @@ function App() {
   const [taxonomyStats, setTaxonomyStats] = useState({ state: 'idle', current: 0, total: 0, message: '' })
   const [isBackendOnline, setIsBackendOnline] = useState(false)
   const [isAiOnline, setIsAiOnline] = useState(false)
+  const [aiStatusDetail, setAiStatusDetail] = useState('AI Offline')
+  const [aiModelName, setAiModelName] = useState('')
+  const [aiContextSize, setAiContextSize] = useState(0)
   const [dismissedErrorPaths, setDismissedErrorPaths] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem('dismissedErrorPaths') || '[]')
@@ -57,6 +97,21 @@ function App() {
       return []
     }
   })
+
+  // Back to Top State
+  const [showBackToTop, setShowBackToTop] = useState(false)
+
+  useEffect(() => {
+    const handleScroll = () => {
+      setShowBackToTop(window.scrollY > 300)
+    }
+    window.addEventListener('scroll', handleScroll)
+    return () => window.removeEventListener('scroll', handleScroll)
+  }, [])
+
+  const scrollToTop = () => {
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
 
   // Search State
   const [searchQuery, setSearchQuery] = useState('')
@@ -98,17 +153,27 @@ function App() {
             if (data.status === 'ok') {
               setIsBackendOnline(true)
               setIsAiOnline(data.ai === true)
+              setAiStatusDetail(data.ai_detail || (data.ai ? 'AI Ready' : 'AI Offline'))
+              setAiModelName(data.ai_name || '')
+              setAiContextSize(data.ai_context_size || 0)
             } else {
               setIsBackendOnline(false)
               setIsAiOnline(false)
+              setAiStatusDetail('AI Offline')
+              setAiModelName('')
+              setAiContextSize(0)
             }
           } catch (jsonErr) {
             setIsBackendOnline(false)
             setIsAiOnline(false)
+            setAiStatusDetail('AI Offline')
+            setAiModelName('')
           }
         } else {
           setIsBackendOnline(false)
           setIsAiOnline(false)
+          setAiStatusDetail('AI Offline')
+          setAiModelName('')
         }
       } catch (e) {
         setIsBackendOnline(false)
@@ -142,12 +207,22 @@ function App() {
             else etaMsg = `ETA: ${minutes}m ${seconds}s`;
           }
 
+          let bpmValue = 0;
+          if (data.startTime && data.processed > 0) {
+            const now = Date.now();
+            const elapsedMinutes = (now - data.startTime) / 60000;
+            if (elapsedMinutes > 0.1) { // Wait for 6 seconds to show data
+              bpmValue = (data.processed / elapsedMinutes).toFixed(1);
+            }
+          }
+
           setTaggingStats({
             processed: data.processed,
             total: data.total,
             current: data.currentFile || 'Processing...',
             startTime: data.startTime,
-            eta: etaMsg
+            eta: etaMsg,
+            bpm: bpmValue
           });
         } else if (isProcessingContent && !data.active) {
           // Backend finished but UI still thinks it's running? 
@@ -246,36 +321,24 @@ function App() {
         body: JSON.stringify({ path })
       })
 
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-
-      while (true) {
-        const { value, done } = await reader.read()
-        if (done) break
-
-        const chunk = decoder.decode(value, { stream: true })
-        const lines = chunk.split('\n\n')
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = JSON.parse(line.slice(6))
-
-            if (data.type === 'progress') {
-              setStats({
-                found: data.found,
-                added: data.added,
-                skipped: data.skipped,
-                metadataExtracted: data.metadataExtracted,
-                metadataFailed: data.metadataFailed,
-                currentFile: data.currentFile
-              })
-            } else if (data.type === 'complete') {
-              setIsScanning(false)
-              fetchBooks() // Refresh list
-            }
-          }
+      await processSSEStream(response, (data) => {
+        if (data.type === 'progress') {
+          setStats({
+            found: data.found,
+            added: data.added,
+            skipped: data.skipped,
+            metadataExtracted: data.metadataExtracted,
+            metadataFailed: data.metadataFailed,
+            currentFile: data.currentFile
+          })
+        } else if (data.type === 'complete') {
+          setIsScanning(false)
+          fetchBooks() // Refresh list
         }
-      }
+      }, (err) => {
+        console.error('Scan stream error', err)
+        setIsScanning(false)
+      })
     } catch (error) {
       console.error('Scan failed', error)
       setIsScanning(false)
@@ -285,7 +348,7 @@ function App() {
 
   const startTagGeneration = async () => {
     // Check if we are filtering
-    const hasFilters = activeTagFilters.length > 0 || activeAuthorFilters.length > 0 || searchQuery;
+    const hasFilters = activeTagFilters.length > 0 || activeAuthorFilters.length > 0 || searchQuery || activeYearFilter;
     const targetFilepaths = hasFilters ? filteredBooks.map(b => b.filepath) : null;
 
     if (hasFilters && targetFilepaths.length === 0) {
@@ -293,9 +356,6 @@ function App() {
       return;
     }
 
-    if (hasFilters && !confirm(`Scan data for ${targetFilepaths.length} filtered books?`)) {
-      return;
-    }
 
     setIsProcessingContent(true)
     try {
@@ -305,60 +365,47 @@ function App() {
         body: JSON.stringify({ targetFilepaths })
       })
 
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
+      await processSSEStream(response, (data) => {
+        if (data.type === 'start') {
+          setTaggingStats({ processed: 0, total: data.total, current: 'Starting AI analysis...', startTime: Date.now() })
+        } else if (data.type === 'progress') {
+          setTaggingStats(prev => {
+            const startTime = data.startTime || prev.startTime || Date.now();
+            const now = Date.now();
+            const elapsed = now - startTime;
 
-      while (true) {
-        const { value, done } = await reader.read()
-        if (done) break
+            let etaMsg = '';
+            if (data.processed > 0) {
+              const msPerBook = elapsed / data.processed;
+              const remaining = data.total - data.processed;
+              const etaMs = remaining * msPerBook;
 
-        const chunk = decoder.decode(value, { stream: true })
-        const lines = chunk.split('\n\n')
+              const hours = Math.floor(etaMs / 3600000);
+              const minutes = Math.floor((etaMs % 3600000) / 60000);
+              const seconds = Math.floor((etaMs % 60000) / 1000);
 
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = JSON.parse(line.slice(6))
-
-            if (data.type === 'start') {
-              setTaggingStats({ processed: 0, total: data.total, current: 'Starting AI analysis...', startTime: Date.now() })
-            } else if (data.type === 'progress') {
-              setTaggingStats(prev => {
-                // Use server start time if available (robustness), else local state, else now
-                const startTime = data.startTime || prev.startTime || Date.now();
-                const now = Date.now();
-                const elapsed = now - startTime;
-
-                // Calculate ETA
-                let etaMsg = '';
-                if (data.processed > 0) {
-                  const msPerBook = elapsed / data.processed;
-                  const remaining = data.total - data.processed;
-                  const etaMs = remaining * msPerBook;
-
-                  const hours = Math.floor(etaMs / 3600000);
-                  const minutes = Math.floor((etaMs % 3600000) / 60000);
-                  const seconds = Math.floor((etaMs % 60000) / 1000);
-
-                  if (hours > 0) etaMsg = `ETA: ${hours}h ${minutes}m`;
-                  else etaMsg = `ETA: ${minutes}m ${seconds}s`;
-                }
-
-                return {
-                  processed: data.processed,
-                  total: data.total,
-                  current: data.current,
-                  startTime: startTime,
-                  eta: etaMsg
-                };
-              })
-              fetchBooks() // Refresh list after each book
-            } else if (data.type === 'complete') {
-              setIsProcessingContent(false)
-              fetchBooks()
+              if (hours > 0) etaMsg = `ETA: ${hours}h ${minutes}m`;
+              else etaMsg = `ETA: ${minutes}m ${seconds}s`;
             }
-          }
+
+            return {
+              processed: data.processed,
+              total: data.total,
+              current: data.current,
+              startTime: startTime,
+              eta: etaMsg,
+              bpm: elapsed > 6000 ? (data.processed / (elapsed / 60000)).toFixed(1) : 0
+            };
+          })
+          fetchBooks()
+        } else if (data.type === 'complete') {
+          setIsProcessingContent(false)
+          fetchBooks()
         }
-      }
+      }, (err) => {
+        console.error('Tagging stream error', err)
+        setIsProcessingContent(false)
+      })
     } catch (error) {
       console.error('Tag generation failed', error)
       setIsProcessingContent(false)
@@ -417,56 +464,45 @@ function App() {
         method: 'POST'
       })
 
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
+      await processSSEStream(response, (data) => {
+        if (data.type === 'start') {
+          setTaxonomyStats({ state: 'learning', current: 0, total: 0, message: 'Analyzing existing taxonomy...' })
+        } else if (data.type === 'progress_learning') {
+          // UX IMPROVEMENT: Show global tag progress (e.g. 4500/8000) instead of relative batches (1/8)
+          // If global stats are missing (backward compat), fall back to batches
+          const currentMsg = data.processedGlobal
+            ? `Learning tags... (${data.processedGlobal} / ${data.totalGlobal})`
+            : `Learning batch ${data.currentBatch}/${data.totalBatches}`;
 
-      while (true) {
-        const { value, done } = await reader.read()
-        if (done) break
-
-        const chunk = decoder.decode(value, { stream: true })
-        const lines = chunk.split('\n\n')
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = JSON.parse(line.slice(6))
-
-            if (data.type === 'start') {
-              setTaxonomyStats({ state: 'learning', current: 0, total: 0, message: 'Analyzing existing taxonomy...' })
-            } else if (data.type === 'progress_learning') {
-              // UX IMPROVEMENT: Show global tag progress (e.g. 4500/8000) instead of relative batches (1/8)
-              // If global stats are missing (backward compat), fall back to batches
-              const currentMsg = data.processedGlobal
-                ? `Learning tags... (${data.processedGlobal} / ${data.totalGlobal})`
-                : `Learning batch ${data.currentBatch}/${data.totalBatches}`;
-
-              setTaxonomyStats({
-                state: 'learning',
-                current: data.processedGlobal || data.currentBatch,
-                total: data.totalGlobal || data.totalBatches,
-                message: currentMsg
-              })
-            } else if (data.type === 'phase_applying') {
-              setTaxonomyStats({ state: 'applying', current: 0, total: 0, message: 'Applying tags to library...' })
-            } else if (data.type === 'progress_applying') {
-              setTaxonomyStats({
-                state: 'applying',
-                current: data.current,
-                total: data.total,
-                message: `Applying to book ${data.current} of ${data.total}`
-              })
-            } else if (data.type === 'complete') {
-              setIsSyncingTaxonomy(false)
-              setTaxonomyStats({ state: 'idle', current: 0, total: 0, message: '' })
-              await fetchBooks()
-              alert(`Taxonomy sync complete! Applied to ${data.count} books.`)
-            } else if (data.type === 'error') {
-              alert(`Sync failed: ${data.message}`)
-              setIsSyncingTaxonomy(false)
-            }
-          }
+          setTaxonomyStats({
+            state: 'learning',
+            current: data.processedGlobal || data.currentBatch,
+            total: data.totalGlobal || data.totalBatches,
+            message: currentMsg
+          })
+        } else if (data.type === 'phase_applying') {
+          setTaxonomyStats({ state: 'applying', current: 0, total: 0, message: 'Applying tags to library...' })
+        } else if (data.type === 'progress_applying') {
+          setTaxonomyStats({
+            state: 'applying',
+            current: data.current,
+            total: data.total,
+            message: `Applying to book ${data.current} of ${data.total}`
+          })
+        } else if (data.type === 'complete') {
+          setIsSyncingTaxonomy(false)
+          setTaxonomyStats({ state: 'idle', current: 0, total: 0, message: '' })
+          fetchBooks()
+          alert(`Taxonomy sync complete! Applied to ${data.count} books.`)
+        } else if (data.type === 'error') {
+          alert(`Sync failed: ${data.message}`)
+          setIsSyncingTaxonomy(false)
         }
-      }
+      }, (err) => {
+        console.error('Taxonomy sync failed', err)
+        alert('Taxonomy sync interrupted.')
+        setIsSyncingTaxonomy(false)
+      })
     } catch (error) {
       alert(`Error: ${error.message}`)
       setIsSyncingTaxonomy(false)
@@ -687,25 +723,93 @@ function App() {
     }
   }, [isScanning, stats.added, books.length])
 
+  // Theme State
+  const [darkMode, setDarkMode] = useState(() => {
+    const saved = localStorage.getItem('theme');
+    return saved ? saved === 'dark' : true; // Default to dark
+  });
+
+  useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
+    }
+  }, [darkMode]);
+
   return (
-    <div className="min-h-screen bg-background text-neutral-100 font-sans selection:bg-primary/30 relative">
+    <div className="min-h-screen bg-background text-[var(--color-text-main)] font-sans selection:bg-indigo-500/30 relative transition-colors duration-300">
       <div className="max-w-7xl mx-auto px-6 py-12">
+        {/* Toggle Theme Button */}
+        <div className="absolute top-6 left-6 z-50">
+          <div className="flex gap-2">
+            <button
+              onClick={() => setDarkMode(!darkMode)}
+              className="p-2 rounded-full bg-black/10 dark:bg-white/10 backdrop-blur-md border border-black/5 dark:border-white/10 shadow-lg hover:bg-black/20 dark:hover:bg-white/20 transition-all duration-300 group"
+              title={darkMode ? "Switch to Light Mode" : "Switch to Dark Mode"}
+            >
+              {darkMode ? (
+                // Sun Icon
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5 text-yellow-300 group-hover:rotate-90 transition-transform duration-500">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591-1.591M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z" />
+                </svg>
+              ) : (
+                // Moon Icon
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5 text-indigo-500 group-hover:-rotate-12 transition-transform duration-500">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21.752 15.002A9.72 9.72 0 0 1 18 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 0 0 3 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 0 0 9.002-5.998Z" />
+                </svg>
+              )}
+            </button>
+
+            {/* System Utilities Toggle */}
+            <button
+              onClick={() => setShowUtilities(!showUtilities)}
+              className={`p-2 rounded-full backdrop-blur-md border shadow-lg transition-all duration-300 group ${showUtilities
+                ? 'bg-primary text-white border-primary shadow-primary/50'
+                : 'bg-black/10 dark:bg-white/10 border-black/5 dark:border-white/10 hover:bg-black/20 dark:hover:bg-white/20 text-gray-700 dark:text-neutral-300'
+                }`}
+              title={showUtilities ? "Back to Library" : "System Utilities"}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className={`w-5 h-5 transition-transform duration-500 ${showUtilities ? 'rotate-180' : 'group-hover:rotate-45'}`}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 0 1 1.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.272.806-.107 1.204.165.397.505.71.93.78l.893.15c.543.09.94.56.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.893.149c-.425.07-.765.383-.93.78-.165.398-.143.854.107 1.204l.527.738c.32.447.269 1.06-.12 1.45l-.774.773a1.125 1.125 0 0 1-1.449.12l-.738-.527c-.35-.25-.806-.272-1.204-.107-.397.165-.71.505-.78.93l-.15.894c-.09.543-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527c-.447.32-1.06.269-1.45-.12l-.773-.774a1.125 1.125 0 0 1-.12-1.45l.527-.737c.25-.35.273-.806.108-1.204-.165-.397-.505-.71-.93-.78l-.894-.15c-.542-.09-.94-.56-.94-1.109v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.765-.383.93-.78.165-.398.143-.854-.107-1.204l-.527-.738a1.125 1.125 0 0 1 .12-1.45l.773-.773a1.125 1.125 0 0 1 1.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.93l.15-.894Z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
         {/* Server Status Indicators */}
         <div className="absolute top-6 right-6 flex flex-col gap-2 z-50">
           {/* Backend Status */}
-          <div className="flex items-center gap-2 bg-black/40 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10 shadow-lg transition-all duration-300 hover:bg-black/60">
+          <div className="flex items-center gap-2 bg-white/80 dark:bg-black/40 backdrop-blur-md px-3 py-1.5 rounded-full border border-black/5 dark:border-white/10 shadow-lg transition-all duration-300 hover:bg-white dark:hover:bg-black/60">
             <div className={`w-2 h-2 rounded-full transition-all duration-500 ${isBackendOnline ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)] animate-pulse'}`} />
-            <span className={`text-xs font-medium transition-colors duration-300 ${isBackendOnline ? 'text-emerald-400/80' : 'text-red-400/80'}`}>
+            <span className={`text-xs font-medium transition-colors duration-300 ${isBackendOnline ? 'text-emerald-600 dark:text-emerald-400/80' : 'text-red-500 dark:text-red-400/80'}`}>
               {isBackendOnline ? 'System Online' : 'System Offline'}
             </span>
           </div>
 
           {/* AI Server Status */}
-          <div className="flex items-center gap-2 bg-black/40 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10 shadow-lg transition-all duration-300 hover:bg-black/60">
-            <div className={`w-2 h-2 rounded-full transition-all duration-500 ${isAiOnline ? 'bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.6)]' : 'bg-neutral-600'}`} />
-            <span className={`text-xs font-medium transition-colors duration-300 ${isAiOnline ? 'text-indigo-400/80' : 'text-neutral-500'}`}>
-              {isAiOnline ? 'AI Model Ready' : 'AI Offline'}
-            </span>
+          <div className="flex items-center gap-2 bg-white/80 dark:bg-black/40 backdrop-blur-md px-3 py-1.5 rounded-full border border-black/5 dark:border-white/10 shadow-lg transition-all duration-300 hover:bg-white dark:hover:bg-black/60">
+            <div className={`w-2 h-2 rounded-full transition-all duration-500 ${isAiOnline ? 'bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.6)]' : 'bg-neutral-400 dark:bg-neutral-600'}`} />
+            <div className="flex flex-col">
+              <span className={`text-xs font-medium transition-colors duration-300 ${isAiOnline ? 'text-indigo-600 dark:text-indigo-400/80' : 'text-neutral-500'}`}>
+                {aiStatusDetail}
+              </span>
+              {isAiOnline && aiModelName && (
+                <div className="flex flex-col">
+                  <span className="text-[10px] text-gray-500 dark:text-neutral-500 font-mono truncate max-w-[120px] leading-tight">
+                    {aiModelName}
+                  </span>
+                  {aiContextSize > 0 && (
+                    <span className="text-[10px] text-indigo-600 dark:text-indigo-300 font-mono leading-tight mt-0.5">
+                      {aiContextSize} active ctx
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -713,120 +817,31 @@ function App() {
           <h1 className="text-4xl font-extrabold tracking-tight bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">
             Vector Bookshelf
           </h1>
-          <div className="flex justify-center gap-4">
-            <button
-              onClick={() => setShowUtilities(!showUtilities)}
-              className={`text-sm px-4 py-1.5 rounded-full border transition-all ${showUtilities ? 'bg-primary text-white border-primary' : 'bg-black/20 text-secondary border-white/10 hover:bg-white/5'}`}
-            >
-              {showUtilities ? 'Back to Library' : 'System Utilities'}
-            </button>
-          </div>
         </header>
 
         <main className="space-y-8">
           {showUtilities ? (
-            <Utilities />
+            <Utilities
+              scanProps={{
+                path,
+                setPath,
+                startScan,
+                isScanning,
+                stats
+              }}
+            />
           ) : (
             <>
-              {/* Collapsible Scan Section */}
-              <div className="bg-surface border border-white/5 rounded-2xl shadow-xl overflow-hidden">
-                {/* Collapsed State - Compact Button */}
-                {scanSectionCollapsed ? (
-                  <div className="p-4 flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <button
-                        onClick={toggleScanSection}
-                        className="px-6 py-2 bg-primary hover:bg-indigo-500 text-white rounded-lg font-medium transition-all"
-                      >
-                        + Add Books
-                      </button>
-                      {totalLibraryCount > 0 && (
-                        <span className="text-sm text-secondary">
-                          {totalLibraryCount} books in library
-                        </span>
-                      )}
-                    </div>
-                    <button
-                      onClick={toggleScanSection}
-                      className="text-secondary hover:text-white transition-colors"
-                      title="Expand scan section"
-                    >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                      </svg>
-                    </button>
-                  </div>
-                ) : (
-                  /* Expanded State - Full Form */
-                  <div className="p-8">
-                    <div className="flex items-center justify-between mb-6">
-                      <h2 className="text-xl font-bold">Scan Library</h2>
-                      <button
-                        onClick={toggleScanSection}
-                        className="text-secondary hover:text-white transition-colors"
-                        title="Collapse scan section"
-                      >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
-                        </svg>
-                      </button>
-                    </div>
-
-                    <div className="flex flex-col gap-6">
-                      <div className="flex gap-4">
-                        <input
-                          type="text"
-                          value={path}
-                          onChange={(e) => setPath(e.target.value)}
-                          placeholder="D:\Books"
-                          className="flex-1 bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-neutral-200 focus:ring-2 focus:ring-primary/50 outline-none"
-                        />
-                        <button
-                          onClick={startScan}
-                          disabled={isScanning || !path}
-                          className={`px-6 py-3 rounded-lg font-bold transition-all ${isScanning ? 'bg-neutral-800' : 'bg-primary hover:bg-indigo-500 text-white'}`}
-                        >
-                          {isScanning ? 'Scanning...' : 'Scan Library'}
-                        </button>
-                      </div>
-
-                      {/* Stats Grid */}
-                      <div className="grid grid-cols-4 gap-4">
-                        <div className="bg-black/20 p-4 rounded-lg">
-                          <div className="text-xs text-secondary uppercase tracking-wider">Found</div>
-                          <div className="text-2xl font-bold">{stats.found}</div>
-                        </div>
-                        <div className="bg-black/20 p-4 rounded-lg border-b-2 border-emerald-500/20">
-                          <div className="text-xs text-secondary uppercase tracking-wider">Added</div>
-                          <div className="text-2xl font-bold text-emerald-400">{stats.added}</div>
-                        </div>
-                        <div className="bg-black/20 p-4 rounded-lg border-b-2 border-cyan-500/20">
-                          <div className="text-xs text-secondary uppercase tracking-wider">Metadata</div>
-                          <div className="text-2xl font-bold text-cyan-400">
-                            {stats.metadataExtracted}
-                            {stats.metadataFailed > 0 && <span className="text-xs text-red-400/70 ml-2">({stats.metadataFailed} fail)</span>}
-                          </div>
-                        </div>
-                        <div className="bg-black/20 p-4 rounded-lg">
-                          <div className="text-xs text-secondary uppercase tracking-wider">Duplicates</div>
-                          <div className="text-2xl font-bold text-amber-400">{stats.skipped}</div>
-                        </div>
-                      </div>
-                      {isScanning && <div className="text-xs font-mono text-secondary truncate">{stats.currentFile}</div>}
-                    </div>
-                  </div>
-                )}
-              </div>
 
 
               {/* Sticky Library Header with Filters */}
-              <div className="sticky top-0 z-10 bg-background pb-4 shadow-xl shadow-background/50 pt-2">
-                <div className="flex flex-col gap-4 bg-surface/50 backdrop-blur-md p-4 rounded-xl border border-white/5">
+              <div className="sticky top-0 z-10 bg-background pb-4 shadow-xl shadow-black/5 dark:shadow-black/50 pt-2 transition-colors duration-300">
+                <div className="flex flex-col gap-4 bg-surface/50 backdrop-blur-md p-4 rounded-xl border border-black/5 dark:border-white/5">
 
                   <div className="flex items-center justify-between">
                     <h2 className="text-2xl font-bold flex items-center gap-3">
                       Library
-                      <span className="text-sm font-normal text-secondary bg-black/30 px-3 py-0.5 rounded-full border border-white/5">
+                      <span className="text-sm font-normal text-gray-600 dark:text-secondary bg-black/5 dark:bg-black/30 px-3 py-0.5 rounded-full border border-black/5 dark:border-white/5">
                         {searchQuery ? `${books.length} results` : `${books.length} books`}
                       </span>
                     </h2>
@@ -836,11 +851,22 @@ function App() {
                         <button
                           onClick={startTagGeneration}
                           disabled={isProcessingMetadata || isProcessingContent || isSyncingTaxonomy || books.length === 0}
-                          className={`px-6 py-2 rounded-lg font-medium border border-cyan-500/20 bg-cyan-950/20 text-cyan-400 hover:bg-cyan-500/10 ${isProcessingContent ? 'bg-neutral-800' : ''}`}
+                          className={`px-6 py-2 rounded-lg font-medium border transition-all ${isProcessingContent ? 'bg-neutral-900 border-neutral-700 text-cyan-400' : 'border-cyan-500/20 bg-cyan-100 dark:bg-cyan-950/20 text-cyan-700 dark:text-cyan-400 hover:bg-cyan-200 dark:hover:bg-cyan-500/10'}`}
                         >
                           {isProcessingContent
-                            ? `AI Data Scan: ${taggingStats.processed}/${taggingStats.total} ${taggingStats.eta ? `(${taggingStats.eta})` : ''}`
-                            : (activeTagFilters.length > 0 || activeAuthorFilters.length > 0 || searchQuery
+                            ? (
+                              <div className="flex flex-col text-[10px] leading-tight">
+                                <div className="text-sm font-bold">
+                                  AI Data Scan: {taggingStats.processed}/{taggingStats.total}
+                                </div>
+                                <div className="flex justify-between opacity-80">
+                                  <span>{taggingStats.eta || 'Calculating...'}</span>
+                                  {taggingStats.bpm > 0 && <span className="opacity-40">•</span>}
+                                  {taggingStats.bpm > 0 && <span>{taggingStats.bpm} books/min</span>}
+                                </div>
+                              </div>
+                            )
+                            : (activeTagFilters.length > 0 || activeAuthorFilters.length > 0 || searchQuery || activeYearFilter
                               ? `Scan ${filteredBooks.length} Filtered`
                               : 'AI Data Scan (All)')}
                         </button>
@@ -873,7 +899,7 @@ function App() {
 
                       <button
                         onClick={() => setShowTaxonomyDoctor(true)}
-                        className="p-2 rounded-lg border border-purple-500/20 bg-purple-950/20 text-purple-400 hover:bg-purple-500/10 transition-colors"
+                        className="p-2 rounded-lg border border-purple-500/20 bg-purple-100 dark:bg-purple-950/20 text-purple-700 dark:text-purple-400 hover:bg-purple-200 dark:hover:bg-purple-500/10 transition-colors"
                         title="Taxonomy Doctor (Fix Tags)"
                       >
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -884,7 +910,7 @@ function App() {
                       <button
                         onClick={handleSyncTaxonomy}
                         disabled={isSyncingTaxonomy || isScanning || isProcessingContent || books.length === 0}
-                        className={`relative px-4 py-2 rounded-lg font-medium border border-amber-500/20 bg-amber-950/20 text-amber-400 hover:bg-amber-500/10 ${isSyncingTaxonomy ? 'bg-neutral-800' : ''} ${!isSyncingTaxonomy && books.some(b => b.tags && !b.master_tags) ? 'animate-pulse ring-1 ring-amber-500' : ''}`}
+                        className={`relative px-4 py-2 rounded-lg font-medium border transition-all ${isSyncingTaxonomy ? 'bg-neutral-900 border-neutral-700 text-amber-400' : 'border-amber-500/20 bg-amber-100 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400 hover:bg-amber-200 dark:hover:bg-amber-500/10'} ${!isSyncingTaxonomy && books.some(b => b.tags && !b.master_tags) ? 'ring-1 ring-amber-500' : ''}`}
                         title="AI groups your tags into categories"
                       >
                         {isSyncingTaxonomy ? (taxonomyStats.message || 'Syncing...') : 'Rescan Categories'}
@@ -893,7 +919,7 @@ function App() {
                       {newErrorBooks.length > 0 && (
                         <button
                           onClick={handleExportErrors}
-                          className={`px-4 py-2 rounded-lg font-medium border transition-colors flex items-center gap-2 ${newErrorBooks.length > 0 ? 'border-red-500/50 bg-red-950/30 text-red-400 hover:bg-red-900/50 animate-pulse' : 'border-red-500/10 bg-red-950/5 text-red-500/50'}`}
+                          className={`px-4 py-2 rounded-lg font-medium border transition-colors flex items-center gap-2 ${newErrorBooks.length > 0 ? 'border-red-500/50 bg-red-100 dark:bg-red-950/30 text-red-700 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/50' : 'border-red-500/10 bg-red-50 dark:bg-red-950/5 text-red-500/50'}`}
                           title={newErrorBooks.length > 0 ? "New errors found!" : "All errors dismissed"}
                         >
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -912,7 +938,7 @@ function App() {
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       placeholder="Search titles, authors, tags..."
-                      className="w-full bg-black/40 border border-white/10 rounded-lg pl-10 pr-4 py-3 text-neutral-200 placeholder:text-neutral-500 focus:ring-2 focus:ring-primary/50 outline-none transition-all"
+                      className="w-full bg-slate-100 dark:bg-black/40 border border-black/10 dark:border-white/10 rounded-lg pl-10 pr-4 py-3 text-gray-900 dark:text-neutral-200 placeholder:text-gray-500 dark:placeholder:text-neutral-500 focus:ring-2 focus:ring-primary/50 outline-none transition-all"
                     />
                     <svg className="w-5 h-5 text-neutral-500 absolute left-3 top-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -1092,10 +1118,10 @@ function App() {
                       <button
                         key={`tag-${tag}`}
                         onClick={() => removeTagFilter(tag)}
-                        className="px-3 py-1 bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full text-sm flex items-center gap-2 hover:bg-indigo-500/30 transition-colors"
+                        className="px-3 py-1 bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 border border-indigo-500/30 rounded-full text-sm flex items-center gap-2 hover:bg-indigo-500/30 transition-colors"
                       >
                         {tag}
-                        <span className="text-indigo-400">×</span>
+                        <span className="text-indigo-600 dark:text-indigo-400">×</span>
                       </button>
                     ))}
 
@@ -1104,10 +1130,10 @@ function App() {
                       <button
                         key={`author-${author}`}
                         onClick={() => removeAuthorFilter(author)}
-                        className="px-3 py-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full text-sm flex items-center gap-2 hover:bg-emerald-500/30 transition-colors"
+                        className="px-3 py-1 bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 rounded-full text-sm flex items-center gap-2 hover:bg-emerald-500/30 transition-colors"
                       >
                         <span className="text-[10px] uppercase opacity-70">Author:</span> {author}
-                        <span className="text-emerald-400">×</span>
+                        <span className="text-emerald-600 dark:text-emerald-400">×</span>
                       </button>
                     ))}
 
@@ -1115,10 +1141,10 @@ function App() {
                     {activeYearFilter && (
                       <button
                         onClick={() => setActiveYearFilter(null)}
-                        className="px-3 py-1 bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 rounded-full text-sm flex items-center gap-2 hover:bg-cyan-500/30 transition-colors"
+                        className="px-3 py-1 bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 border border-cyan-500/30 rounded-full text-sm flex items-center gap-2 hover:bg-cyan-500/30 transition-colors"
                       >
                         <span className="text-[10px] uppercase opacity-70">Year:</span> {activeYearFilter}
-                        <span className="text-cyan-400">×</span>
+                        <span className="text-cyan-600 dark:text-cyan-400">×</span>
                       </button>
                     )}
 
@@ -1159,9 +1185,9 @@ function App() {
 
               {isProcessingContent && <div className="text-xs font-mono text-cyan-500/70 max-w-md truncate">AI Data Scan: {taggingStats.current}</div>}
               {/* Book List */}
-              <div className="bg-surface border border-white/5 rounded-2xl overflow-visible">
+              <div className="bg-surface border border-black/5 dark:border-white/5 rounded-2xl overflow-visible shadow-sm">
                 <table className="w-full text-left text-sm" style={{ tableLayout: 'fixed' }}>
-                  <thead className="bg-white/5 text-secondary font-medium">
+                  <thead className="bg-black/5 dark:bg-white/5 text-secondary font-medium">
                     <tr>
                       <th className="px-4 py-3 cursor-pointer hover:text-white transition-colors group" style={{ width: '30%' }} onClick={() => requestSort('title')}>
                         Title {sortConfig.key === 'title' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
@@ -1178,15 +1204,15 @@ function App() {
                       </th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-white/5">
+                  <tbody className="divide-y divide-black/5 dark:divide-white/5">
                     {paginatedBooks.map((book) => (
                       <tr
                         key={book.id}
-                        className="hover:bg-white/5 transition-colors"
+                        className="hover:bg-black/5 dark:hover:bg-white/5 transition-colors group"
                         onMouseEnter={() => setHoveredRow(book.id)}
                         onMouseLeave={() => setHoveredRow(null)}
                       >
-                        <td className="px-4 py-2 font-medium text-white">
+                        <td className="px-4 py-2 font-medium text-gray-900 dark:text-white">
                           <div className="relative group inline-block flex items-center gap-2">
                             {editingCell?.id === book.id && editingCell?.field === 'title' ? (
                               <input
@@ -1213,30 +1239,12 @@ function App() {
                                     e.stopPropagation();
                                     setEditingCell({ id: book.id, field: 'title' });
                                   }}
-                                  className="opacity-0 group-hover:opacity-100 text-neutral-500 hover:text-white transition-opacity px-1"
+                                  className="opacity-0 group-hover:opacity-100 text-neutral-500 hover:text-black dark:hover:text-white hover:bg-gray-200 dark:hover:bg-white/10 rounded transition-all px-1"
                                   title="Edit Title"
                                 >
                                   ✎
                                 </button>
                               </>
-                            )}
-
-                            {/* Property Sync Button */}
-                            {!editingCell && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleMetadataSync(book.id, book.filepath);
-                                }}
-                                disabled={syncingMetadataId !== null}
-                                className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition-all cursor-pointer border ${syncingMetadataId === book.id
-                                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 animate-pulse'
-                                  : 'opacity-0 group-hover:opacity-100 bg-white/5 text-secondary border-white/10 hover:bg-white/10 hover:text-white'
-                                  } disabled:opacity-50`}
-                                title="Reread properties (Title, Author, Year) from file"
-                              >
-                                {syncingMetadataId === book.id ? 'SYNCING...' : 'SYNC PROP'}
-                              </button>
                             )}
 
                             {/* Continuous Rescan Button */}
@@ -1248,10 +1256,10 @@ function App() {
                                 }}
                                 disabled={scanningBookId !== null}
                                 className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer border ${scanningBookId === book.id
-                                  ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50 animate-pulse'
+                                  ? 'bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 border-cyan-500/50 animate-pulse'
                                   : (book.tags || book.master_tags)
-                                    ? 'opacity-0 group-hover:opacity-100 bg-neutral-500/10 text-neutral-400 border-neutral-500/20 hover:bg-neutral-500/20'
-                                    : 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-500/20 shadow-[0_0_10px_rgba(99,102,241,0.1)]'
+                                    ? 'opacity-0 group-hover:opacity-100 bg-neutral-500/10 text-neutral-600 dark:text-neutral-400 border-neutral-500/20 hover:bg-neutral-500/20'
+                                    : 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20 hover:bg-indigo-500/20 shadow-[0_0_10px_rgba(99,102,241,0.1)]'
                                   } disabled:opacity-50`}
                                 title={(book.tags || book.master_tags) ? "Regenerate AI tags and summary" : "Analyze book with AI"}
                               >
@@ -1261,10 +1269,28 @@ function App() {
                               </button>
                             )}
 
+                            {/* Property Sync Button */}
+                            {!editingCell && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleMetadataSync(book.id, book.filepath);
+                                }}
+                                disabled={syncingMetadataId !== null}
+                                className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition-all cursor-pointer border ${syncingMetadataId === book.id
+                                  ? 'bg-amber-500/20 text-amber-700 dark:text-amber-300 border-amber-500/50 animate-pulse'
+                                  : 'opacity-0 group-hover:opacity-100 bg-neutral-200 dark:bg-white/5 text-neutral-600 dark:text-neutral-300 border-neutral-300 dark:border-white/10 hover:bg-neutral-300 dark:hover:bg-white/10 hover:text-black dark:hover:text-white'
+                                  } disabled:opacity-50`}
+                                title="Reread properties (Title, Author, Year) from file"
+                              >
+                                {syncingMetadataId === book.id ? 'SYNCING...' : 'SYNC PROP'}
+                              </button>
+                            )}
+
                             {book.summary ? (
-                              <div className="absolute z-50 hidden group-hover:block bg-surface/95 border border-white/10 p-4 rounded-xl shadow-2xl w-80 bottom-full left-0 mb-1 pointer-events-none backdrop-blur-md animate-in fade-in slide-in-from-bottom-2 duration-200">
+                              <div className="absolute z-50 hidden group-hover:block bg-surface/95 border border-neutral-200 dark:border-white/10 p-4 rounded-xl shadow-2xl w-80 bottom-full left-0 mb-1 pointer-events-none backdrop-blur-md animate-in fade-in slide-in-from-bottom-2 duration-200">
                                 <div className="text-[10px] text-primary uppercase tracking-[0.2em] mb-2 font-bold">AI Summary</div>
-                                <p className="text-sm leading-relaxed text-neutral-300 font-normal">{book.summary}</p>
+                                <p className="text-sm leading-relaxed text-neutral-700 dark:text-neutral-300 font-normal">{book.summary}</p>
                                 <div className="absolute top-full left-4 border-8 border-transparent border-t-surface/95"></div>
                               </div>
                             ) : (
@@ -1273,7 +1299,7 @@ function App() {
                                   <span>No AI Insight</span>
                                   {scanningBookId === book.id && <span className="animate-pulse text-cyan-400">Scanning...</span>}
                                 </div>
-                                <p className="text-sm leading-relaxed text-neutral-400 font-normal italic mb-3">
+                                <p className="text-sm leading-relaxed text-neutral-600 dark:text-neutral-400 font-normal italic mb-3">
                                   No AI summary or tags generated yet.
                                 </p>
                                 <div className="absolute top-full left-4 border-8 border-transparent border-t-surface/95"></div>
@@ -1304,8 +1330,8 @@ function App() {
                                         key={i}
                                         onClick={() => handleAuthorClick(author)}
                                         className={`px-2 py-0.5 rounded-md text-xs font-medium transition-all cursor-pointer border ${isActive
-                                          ? 'bg-emerald-500/30 text-emerald-200 border-emerald-500/50'
-                                          : 'bg-white/5 text-neutral-300 border-white/10 hover:bg-emerald-500/10 hover:text-emerald-300 hover:border-emerald-500/30'
+                                          ? 'bg-emerald-500/30 text-emerald-700 dark:text-emerald-200 border-emerald-500/50'
+                                          : 'bg-black/5 dark:bg-white/5 text-gray-700 dark:text-neutral-300 border-black/5 dark:border-white/10 hover:bg-emerald-500/10 hover:text-emerald-600 dark:hover:text-emerald-300 hover:border-emerald-500/30'
                                           }`}
                                       >
                                         {author}
@@ -1315,7 +1341,7 @@ function App() {
 
                                   <button
                                     onClick={() => setEditingCell({ id: book.id, field: 'author' })}
-                                    className="opacity-0 group-hover:opacity-100 text-neutral-500 hover:text-white transition-opacity px-1"
+                                    className="opacity-0 group-hover:opacity-100 text-neutral-500 hover:text-black dark:hover:text-white hover:bg-gray-200 dark:hover:bg-white/10 rounded transition-all px-1"
                                     title="Edit Author"
                                   >
                                     ✎
@@ -1336,8 +1362,8 @@ function App() {
                                   key={`master-${i}`}
                                   onClick={() => handleTagClick(trimmedTag)}
                                   className={`px-2 py-0.5 border rounded-full text-[10px] tracking-wider transition-all cursor-pointer ${isActive
-                                    ? 'bg-orange-500/30 text-orange-200 border-orange-500/50'
-                                    : 'bg-orange-500/10 text-orange-400 border-orange-500/20 hover:bg-orange-500/20'
+                                    ? 'bg-orange-500 text-white border-orange-600 font-bold'
+                                    : 'bg-orange-500/10 text-orange-700 dark:text-orange-400 border-orange-500/20 hover:bg-orange-500/20'
                                     }`}
                                 >
                                   {trimmedTag}
@@ -1364,7 +1390,7 @@ function App() {
                             }) : !book.master_tags && <span className="text-neutral-700 italic text-xs">No tags</span>}
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-neutral-400 whitespace-nowrap">
+                        <td className="px-4 py-3 text-gray-600 dark:text-neutral-400 whitespace-nowrap">
                           <div className="relative group flex items-center gap-2">
                             {editingCell?.id === book.id && editingCell?.field === 'publication_year' ? (
                               <input
@@ -1396,7 +1422,7 @@ function App() {
                                     e.stopPropagation();
                                     setEditingCell({ id: book.id, field: 'publication_year' });
                                   }}
-                                  className="opacity-0 group-hover:opacity-100 text-neutral-500 hover:text-white transition-opacity px-1"
+                                  className="opacity-0 group-hover:opacity-100 text-neutral-500 hover:text-black dark:hover:text-white hover:bg-gray-200 dark:hover:bg-white/10 rounded transition-all px-1"
                                   title="Edit Year"
                                 >
                                   ✎
@@ -1405,7 +1431,7 @@ function App() {
                             )}
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-white font-mono text-[11px] break-words relative group">
+                        <td className="px-4 py-3 text-gray-900 dark:text-white font-mono text-[11px] break-words relative group">
                           <div className="flex items-center gap-2">
                             <button
                               onClick={async () => {
@@ -1430,7 +1456,7 @@ function App() {
                             </button>
                             <button
                               onClick={() => copyToClipboard(book.filepath)}
-                              className="ml-auto flex-shrink-0 px-2 py-1 bg-white/5 hover:bg-white/10 rounded text-[10px] text-secondary hover:text-white transition-all opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto"
+                              className="ml-auto flex-shrink-0 px-2 py-1 bg-gray-200 dark:bg-white/5 hover:bg-gray-300 dark:hover:bg-white/10 rounded text-[10px] text-gray-600 dark:text-secondary hover:text-black dark:hover:text-white transition-all opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto"
                               title="Copy full path"
                             >
                               📋
@@ -1504,6 +1530,19 @@ function App() {
           )}
         </main>
       </div >
+
+      {/* Back to Top Button */}
+      {showBackToTop && (
+        <button
+          onClick={scrollToTop}
+          className="fixed bottom-6 right-6 z-50 p-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full shadow-lg shadow-indigo-900/50 transition-all duration-300 animate-in fade-in slide-in-from-bottom-4"
+          title="Back to Top"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-5 h-5">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 15.75l7.5-7.5 7.5 7.5" />
+          </svg>
+        </button>
+      )}
     </div >
   )
 }

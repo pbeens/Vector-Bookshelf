@@ -1,12 +1,14 @@
 import fs from 'fs';
 import path from 'path';
 import { createRequire } from 'module';
+import { getActiveModelPath } from './config.js';
 
 const require = createRequire(import.meta.url);
 const { EPub } = require('epub2');
-const { PDFParse } = require('pdf-parse');
+// PDFParse v2 exports a class, ensuring we get the constructor
+const pdfLib = require('pdf-parse');
+const PDFParse = pdfLib.PDFParse || pdfLib;
 
-const LM_STUDIO_URL = 'http://localhost:1234/v1/chat/completions';
 const MAX_CONTENT_CHARS = 5000; // Requires ~6K context window in LM Studio (adjust if using smaller models)
 
 const SYSTEM_PROMPT = `
@@ -67,19 +69,38 @@ async function extractContentText(filepath) {
 
             return await Promise.race([extractionPromise, timeoutPromise]);
         } catch (err) {
-            console.error(`[Tagger] EPUB Text Extraction Error (${filepath}):`, err.message);
-            return null;
+            console.error(`[Tagger] EPUB Text Extraction Error (${path.basename(filepath)}):`, err.message);
+            return { error: `Extraction Failed: ${err.message}` };
         }
     } else if (ext === '.pdf') {
         try {
             const dataBuffer = await fs.promises.readFile(filepath);
-            const parser = new PDFParse({ data: dataBuffer });
-            // Extract first 10 pages for analysis
-            const result = await parser.getText({ first: 10 });
-            return result.text.substring(0, MAX_CONTENT_CHARS);
+            // Robust instantiation
+            let parser;
+            try {
+                parser = new PDFParse({ data: dataBuffer });
+            } catch (instantiateErr) {
+                // Fallback for different export styles
+                 if (typeof PDFParse === 'function') {
+                    // Try calling as function if new fails (unlikely given new PDFParse check)
+                    const result = await PDFParse(dataBuffer);
+                    return result.text.substring(0, MAX_CONTENT_CHARS);
+                 }
+                 throw instantiateErr;
+            }
+            const pdf = await parser.getText();
+            return pdf.text.substring(0, MAX_CONTENT_CHARS);
         } catch (err) {
-            console.error(`[Tagger] PDF Text Extraction Error (${filepath}):`, err.message);
-            return null;
+            console.error(`[Tagger] PDF Text Extraction Error (${path.basename(filepath)}):`, err.message);
+            return { error: `Extraction Failed: ${err.message}` };
+        }
+    } else if (ext === '.txt' || ext === '.md') {
+        try {
+            const content = await fs.promises.readFile(filepath, 'utf8');
+            return content.substring(0, MAX_CONTENT_CHARS);
+        } catch (err) {
+            console.error(`[Tagger] Text Extraction Error (${path.basename(filepath)}):`, err.message);
+            return { error: `Extraction Failed: ${err.message}` };
         }
     }
     return null;
@@ -100,75 +121,126 @@ function loadTaggingRules() {
 }
 
 /**
- * Call LM Studio to get tags/summary
+ * Singleton manager for local Llama instance
+ */
+let llamaInstance = null;
+let modelInstance = null;
+let contextInstance = null;
+let activeContextSize = 0;
+
+export async function getLlamaManager(modelPath) {
+    if (modelInstance && modelInstance.modelPath === modelPath) {
+        return { model: modelInstance, context: contextInstance };
+    }
+
+    console.log(`[Llama] Loading model from: ${modelPath}`);
+    const { getLlama } = await import('node-llama-cpp');
+    
+    if (!llamaInstance) {
+        // Auto-detect best GPU backend (CUDA, Vulkan, Metal)
+        llamaInstance = await getLlama(); 
+    }
+
+    // Disposal prevents VRAM leaks on reload
+    if (modelInstance) {
+         // modelInstance.dispose(); // Common in some versions, but we'll trust GC or overwrite for now to avoid crashes
+    }
+
+    modelInstance = await llamaInstance.loadModel({ 
+        modelPath,
+        gpuLayers: 'max' // Force max GPU usage
+    });
+    
+    // Dynamic Context Size Fallback
+    const contextSizes = [8192, 4096, 2048];
+    for (const size of contextSizes) {
+        try {
+            console.log(`[Llama] Attempting to create context with size: ${size}`);
+            contextInstance = await modelInstance.createContext({ contextSize: size });
+            console.log(`[Llama] Context created successfully at ${size} tokens.`);
+            activeContextSize = size;
+            break; // Success
+        } catch (e) {
+            console.warn(`[Llama] Failed to create context at ${size}: ${e.message}`);
+            if (size === 2048) {
+                throw new Error("Failed to initialize AI context even at lowest setting (2048). VRAM might be full.");
+            }
+        }
+    }
+    
+    return { model: modelInstance, context: contextInstance };
+}
+
+export function getActiveContextSize() {
+    return activeContextSize;
+}
+
+async function getTagsFromLocalLlama(text, modelPath) {
+    try {
+        const { model, context } = await getLlamaManager(modelPath);
+        const { LlamaChatSession } = await import('node-llama-cpp');
+        
+        const customRules = loadTaggingRules();
+        let systemPrompt = SYSTEM_PROMPT;
+        if (customRules) {
+            systemPrompt += `\n\nCRITICAL USER DEFINED RULES:\n${customRules}\n\nStrictly follow the above rules when generating tags.`;
+        }
+
+        const session = new LlamaChatSession({ 
+            contextSequence: context.getSequence(),
+            systemPrompt 
+        });
+
+        console.log('[Llama] Generating tags...');
+        const startTime = Date.now();
+        const response = await session.prompt(`Book Excerpt:\n\n${text}`, {
+            grammar: await llamaInstance.getGrammarFor("json"),
+            maxTokens: 500,
+            temperature: 0.3
+        });
+        const endTime = Date.now();
+        const durationSeconds = (endTime - startTime) / 1000;
+
+        console.log('[Llama] Response received.');
+        
+        try {
+            const parsed = JSON.parse(response);
+            // Removed token tracking
+            return { 
+                result: parsed, 
+                usage: {} // Empty usage object as per instruction
+            };
+        } catch (e) {
+            console.error("[Llama] Invalid JSON from local AI:", response);
+            return null;
+        }
+    } catch (err) {
+        console.error("[Llama] Local AI Error:", err.message);
+        return { error: `Local AI Error: ${err.message}` };
+    }
+}
+
+/**
+ * Call Local LLM to get tags/summary
  */
 async function getTagsFromAI(text) {
     try {
-
         if (text) {
              console.log(`[Tagger] Text Preview: ${text.substring(0, 50).replace(/\n/g, ' ')}...`);
         }
 
-        console.error(`[Tagger] Calling LM Studio at ${LM_STUDIO_URL}...`);
+        const modelPath = getActiveModelPath();
         
-        // Inject Custom Rules
-        const customRules = loadTaggingRules();
-        let prompt = SYSTEM_PROMPT;
-        if (customRules) {
-            prompt += `\n\nCRITICAL USER DEFINED RULES:\n${customRules}\n\nStrictly follow the above rules when generating tags.`;
-        }
-        
-        // Create abort controller for timeout
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout for debugging
-        
-        console.error(`[Tagger] Fetching...`);
-        const response = await fetch(LM_STUDIO_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                model: "local-model", // LM Studio ignores this, but required
-                messages: [
-                    { role: "system", content: prompt },
-                    { role: "user", content: `Book Excerpt:\n\n${text}` }
-                ],
-                temperature: 0.3,
-                max_tokens: 500
-            }),
-            signal: controller.signal
-        });
-        
-        clearTimeout(timeoutId);
-        console.error(`[Tagger] Fetch complete. Status: ${response.status}`);
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`LM Studio Error ${response.status}: ${errorText}`);
+        if (!modelPath) {
+             console.error('[Tagger] No embedded model selected.');
+             return { error: 'No local model selected. Please pick one in Utilities.' };
         }
 
-        console.error(`[Tagger] Parsing JSON response...`);
-        const data = await response.json();
-        console.error(`[Tagger] JSON parsed. Extracting content...`);
-        const content = data.choices[0].message.content;
-        
-        console.error(`[Tagger] AI Response received (Length: ${content.length})`);
-        
-        // Try to parse JSON from response
-        try {
-            // Some models might wrap JSON in backticks
-            const jsonStr = content.match(/\{[\s\S]*\}/)?.[0] || content;
-            return JSON.parse(jsonStr);
-        } catch (e) {
-            console.error("[Tagger] Invalid JSON from AI:", content);
-            return null;
-        }
+        return await getTagsFromLocalLlama(text, modelPath);
+
     } catch (err) {
-        if (err.name === 'AbortError') {
-            console.error("[Tagger] AI Service Timeout: Request took longer than 3 mins");
-        } else {
-            console.error("[Tagger] AI Service Error:", err.message);
-        }
-        return null;
+        console.error("[Tagger] AI Service Error:", err.message);
+        return { error: `AI Error: ${err.message}` };
     }
 }
 
@@ -176,16 +248,24 @@ async function getTagsFromAI(text) {
  * Main function to process a book
  */
 export async function processBookContent(filepath) {
-    const text = await extractContentText(filepath);
-    if (!text || text.trim().length < 50) {
-        console.warn(`[Tagger] Not enough text extracted from ${path.basename(filepath)}`);
+    const textData = await extractContentText(filepath);
+    
+    if (textData && typeof textData === 'object' && textData.error) {
+        return textData; // Pass through extraction error
+    }
+
+    const text = textData;
+    // Lowered threshold to 5 characters for better compatibility with short books
+    if (!text || text.trim().length < 5) {
+        console.warn(`[Tagger] Not enough text extracted from ${path.basename(filepath)} (Length: ${text ? text.trim().length : 0})`);
         return null;
     }
 
     console.log(`[Tagger] Sending text to AI for ${path.basename(filepath)} (${text.length} chars)...`);
-    const result = await getTagsFromAI(text);
+    const responseData = await getTagsFromAI(text);
     
-    if (result && result.tags) {
+    if (responseData && responseData.result && responseData.result.tags) {
+        const { result, usage } = responseData;
         // Normalize tags: Pascal-Case-With-Hyphens and comma-separated string
         const formattedTags = result.tags
             .map(t => normalizeTag(t))
@@ -193,8 +273,14 @@ export async function processBookContent(filepath) {
             
         return {
             tags: formattedTags.join(', '),
-            summary: result.summary || ''
+            summary: result.summary || '',
+            // Removed token tracking from here
         };
     }
+    
+    if (responseData && responseData.error) {
+        return { error: responseData.error };
+    }
+    
     return null;
 }

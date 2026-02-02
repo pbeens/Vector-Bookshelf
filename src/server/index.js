@@ -6,8 +6,9 @@ import { exec } from 'child_process';
 import { initDB, getAllBooks, getBooksNeedingMetadata, updateBookMetadata, getBooksNeedingContent, updateBookContent, updateMasterTags, updateBookManualMetadata, database } from './db.js';
 import { scanDirectory } from './scanner.js';
 import { extractMetadata } from './metadata.js';
-import { processBookContent } from './tagger.js';
+import { processBookContent, getActiveContextSize } from './tagger.js';
 import { syncAdaptiveTaxonomy, computeMasterTags } from './taxonomy.js';
+import { getActiveModelPath } from './config.js';
 
 const app = express();
 const PORT = 3001;
@@ -25,7 +26,8 @@ let scanState = {
     processed: 0,
     total: 0,
     currentFile: null,
-    startTime: null
+    startTime: null,
+    totalTokens: 0
 };
 
 // ... (rest of the listeners and endpoints follow)
@@ -65,32 +67,85 @@ app.get('/api/scan/status', (req, res) => {
 // Health check
 // Health check (Checks both Backend & AI Server)
 app.get('/api/health', async (req, res) => {
-    let aiStatus = false;
-    let aiError = null;
+    let aiStatus = 'offline';
+    let aiName = '';
+    let aiDetail = '';
 
-    try {
-        // Check if LM Studio is running
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 1000); // 1s timeout
-        
-        const aiRes = await fetch('http://localhost:1234/v1/models', { signal: controller.signal });
-        clearTimeout(timeoutId);
-        
-        if (aiRes.ok) {
-            aiStatus = true;
-            // console.log(`[HealthCheck] AI Server Online (LM Studio)`); // Too noisy
+    const modelPath = getActiveModelPath();
+
+    if (modelPath) {
+        if (fs.existsSync(modelPath)) {
+            aiStatus = 'online';
+            aiDetail = 'Embedded (Ready)';
+            aiName = path.basename(modelPath);
+        } else {
+             aiStatus = 'offline';
+             aiDetail = 'Embedded (Model Missing)';
         }
-    } catch (e) {
-        aiError = e.message;
+    } else {
+        aiStatus = 'offline';
+        aiDetail = 'Embedded (No Model Selected)';
     }
 
-    // Always return 200 if backend is up, but include AI status in body
     res.json({ 
         status: 'ok', 
         timestamp: Date.now(), 
         backend: true, 
-        ai: aiStatus,
-        ai_error: aiError
+        ai: aiStatus === 'online',
+        ai_status: aiStatus,
+        ai_name: aiName,
+        ai_detail: aiDetail,
+        ai_context_size: getActiveContextSize() || 0
+    });
+    return; // Skip old logic
+    
+    /* Old logic removed */
+    const { getCurrentServer } = await import('./config.js');
+
+
+    if (server.type === 'built_in') {
+        // For built-in, "online" means we have a model path configured
+        if (server.modelPath && fs.existsSync(server.modelPath)) {
+            const modelName = path.basename(server.modelPath);
+            aiStatus = 'online';
+            aiDetail = 'Embedded (Ready)';
+            aiName = modelName;
+        } else {
+            aiStatus = 'offline';
+            aiDetail = 'Embedded (No Model)';
+        }
+    } else {
+        // For external servers, we ping
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 1000); 
+            
+            // Note: server.url is usually .../v1/chat/completions, 
+            // the base URL is better for health check but we'll try to reach the completions endpoint or models list
+            const healthUrl = server.url.replace('/chat/completions', '/models').replace('/completions', '/models');
+            
+            const aiRes = await fetch(healthUrl, { signal: controller.signal });
+            clearTimeout(timeoutId);
+            
+            if (aiRes.ok) {
+                aiStatus = 'online';
+                aiDetail = `${server.name} (Online)`;
+            } else {
+                aiDetail = `${server.name} (Error ${aiRes.status})`;
+            }
+        } catch (e) {
+            aiDetail = `${server.name} (Offline)`;
+        }
+    }
+
+    res.json({ 
+        status: 'ok', 
+        timestamp: Date.now(), 
+        backend: true, 
+        ai: aiStatus === 'online',
+        ai_status: aiStatus,
+        ai_name: aiName,
+        ai_detail: aiDetail
     });
 });
 
@@ -427,7 +482,8 @@ app.post('/api/books/process-content', async (req, res) => {
             const placeholders = chunk.map(() => '?').join(',');
             const rows = database.prepare(`
                 SELECT filepath FROM books 
-                WHERE filepath IN (${placeholders})
+                WHERE filepath IN (${placeholders}) 
+                AND (content_scanned = 0 OR tags IS NULL OR tags = '' OR tags LIKE 'Error:%' OR tags LIKE 'Skipped:%')
             `).all(...chunk);
             targetBooks.push(...rows);
         }
@@ -442,6 +498,7 @@ app.post('/api/books/process-content', async (req, res) => {
     scanState.processed = 0;
     scanState.active = true;
     scanState.startTime = Date.now();
+    scanState.totalTokens = 0;
     scanState.currentFile = 'Initializing...';
     
     console.log(`[TaggerJob] Starting processing for ${scanState.total} books (${isTargeted ? 'Targeted' : 'Full Scan'})`);
@@ -495,16 +552,24 @@ app.post('/api/books/process-content', async (req, res) => {
                     try {
                         const contentData = await processBookContent(book.filepath);
                         
-                        if (contentData) {
+                        if (contentData && !contentData.error) {
                             console.log(`[TaggerJob] Success: ${scanState.currentFile}`);
                             updateBookContent(book.filepath, contentData);
                             tagsToSend = contentData.tags;
                             
                             const masterTags = computeMasterTags(contentData.tags);
                             if (masterTags) updateMasterTags(book.filepath, masterTags);
+                            
+                            if (contentData.total_tokens) {
+                                scanState.totalTokens += contentData.total_tokens;
+                            }
+                        } else if (contentData && contentData.error) {
+                            console.warn(`[TaggerJob] AI Error for: ${scanState.currentFile} - ${contentData.error}`);
+                            updateBookContent(book.filepath, { tags: `Error: ${contentData.error}`, summary: 'AI connection or processing failed.' });
+                            tagsToSend = `Error: ${contentData.error}`;
                         } else {
                             console.warn(`[TaggerJob] No content data for: ${scanState.currentFile}`);
-                            updateBookContent(book.filepath, { tags: 'Skipped: No Content', summary: 'Insufficient text.' });
+                            updateBookContent(book.filepath, { tags: 'Skipped: No Content', summary: 'Insufficient text extracted from file.' });
                             tagsToSend = 'Skipped: No Content';
                         }
                     } catch (e) {
@@ -522,6 +587,7 @@ app.post('/api/books/process-content', async (req, res) => {
                             total: scanState.total, 
                             current: scanState.currentFile,
                             startTime: scanState.startTime,
+                            totalTokens: scanState.totalTokens,
                             tags: tagsToSend
                         })}\n\n`);
                     } catch (writeErr) { }

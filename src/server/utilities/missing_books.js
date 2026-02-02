@@ -7,7 +7,7 @@ export const metadata = {
     description: 'Scans the database for books that are no longer found in the file system.',
     actions: [
         { id: 'scan', label: 'Scan for Missing Books', type: 'scan' },
-        { id: 'process', label: 'Remove Selected Books', type: 'execute', destructive: true }
+        { id: 'process', label: 'Purge Missing Books from DB', type: 'execute', destructive: true }
     ]
 };
 

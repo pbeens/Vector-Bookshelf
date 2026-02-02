@@ -75,6 +75,20 @@ export async function extractMetadata(filepath) {
   const ext = path.extname(filepath).toLowerCase();
   
   try {
+    // 1. Check file size first to prevent OOM
+    const stats = await fs.promises.stat(filepath);
+    const fileSizeInBytes = stats.size;
+    const MAX_SIZE = 150 * 1024 * 1024; // 150MB Limit
+
+    if (fileSizeInBytes > MAX_SIZE) {
+        console.warn(`[Metadata] Skipping ${path.basename(filepath)} - File too large (${(fileSizeInBytes / 1024 / 1024).toFixed(2)}MB)`);
+        return {
+            title: cleanFilename(filepath),
+            author: 'Unknown',
+            publication_year: null
+        };
+    }
+
     let result = null;
     if (ext === '.epub') {
       result = await withTimeout(extractEpub(filepath), filepath);

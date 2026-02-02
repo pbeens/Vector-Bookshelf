@@ -3,9 +3,7 @@
 A high-end research tool that treats a directory of books as a raw knowledge base, extracting its own metadata, relationship intelligence, and AI-derived classifications.
 
 > [!IMPORTANT]
-> **AI Requirement:** This project currently requires **[LM Studio](https://lmstudio.ai/)** to be installed and running locally (Server Mode on port `1234`) to power the AI tagging and summarization features.
->
-> *Support for cloud-based LLM APIs (OpenAI, Anthropic, etc.) is planned for a future release.*
+> **AI Architecture:** This project now runs exclusively on an **Embedded Local AI** (via `node-llama-cpp`). It requires no external servers (like LM Studio or Ollama) and is fully self-contained.
 >
 > *Note: This repository also includes development support files, such as custom `skills/` configurations, to assist with agentic development workflows.*
 
@@ -14,8 +12,8 @@ A high-end research tool that treats a directory of books as a raw knowledge bas
 - **Frontend:** React (Vite) + Tailwind CSS v4
 - **Backend:** Node.js (Express)
 - **Database:** SQLite (with WAL mode for robustness)
-- **AI Integration:** LM Studio (Local LLM Server)
-- **Core Libraries:** `epub2` (EPUB parsing), `pdf-parse` (PDF analysis)
+- **AI Integration:** Embedded `llama.cpp` (GGUF Models)
+- **Core Libraries:** `node-llama-cpp` (Inference), `epub2` (EPUB parsing), `pdf-parse` (PDF analysis)
 
 ## 🚀 How It Works
 
@@ -33,7 +31,7 @@ The system operates in **Phases** to ensure performance and data integrity.
 
 - Click "AI Data Scan" to process book content.
 - Reads the first **5000 characters** (Preface/Intro) of each book.
-- Sends text to LM Studio to generate specific tags and a summary.
+- Processes text using the local GGUF model.
 - **Result:** Books get rich tags (e.g., "Space-Opera", "Python") and summaries.
 
 **3. Rescan Categories**
@@ -50,12 +48,14 @@ The system operates in **Phases** to ensure performance and data integrity.
 - **Manual Metadata Editing:** Hover over any Title/Author to see a ✎ pencil. Click to edit inline. Edits are **locked** and safe from auto-scans.
 - **Bulk Export:** Filter your library (e.g., "Fiction" + "Neil Gaiman") and export the actual files to a folder of your choice.
 - **Author Filtering:** Click any author name to filter the library. Combine multiple authors and tags for precise searches.
+- **Light/Dark Mode:** Toggle seamlessly between a focused Dark Mode for night reading and a crisp Light Mode for high-contrast visibility.
 - **Interactive Hover Summaries:** Hover over any title to see an AI-generated summary tooltip.
 - **"Scan Now" Tooltip Action:** Process individual books instantly without a full library scan.
 - **Clickable Filenames:** Click any filename in the library table to open its containing folder in Windows Explorer.
 - **Error Reporting:** Built-in "Export Errors" tool generates a text file report of all corrupted or skipped books for easy cleanup.
 - **Real-time Stats:** Live tracking of detected files, added books, metadata extraction, and failures.
 - **Glassmorphism UI:** Modern, premium aesthetic with smooth transitions and stable layouts.
+- **AI Context Indicator:** Live display of the active context size (e.g., "8192 active ctx") to monitor VRAM usage.
 
 ## 🧹 Maintenance Commands
 
@@ -67,7 +67,8 @@ The project includes built-in automation to help with testing, cleanup, and docu
 
 ## 🔮 Future Roadmap
 
-- **Cloud/External LLM API Support:** Allow users to switch from local LM Studio to OpenAI, Anthropic, or DeepSeek APIs for faster processing without high-end GPU requirements.
+- **External Media Awareness:** Intelligent "Missing Book Cleaner" that recognizes books on disconnected USB drives or network shares by tracking volume labels/serial numbers to prevent accidental database purging.
+- **Cloud/External LLM API Support:** Re-introduce support for OpenAI/Anthropic APIs as an optional fallback.
 - **Visuals & Metadata:**
   - **Local Covers:** Auto-extract `cover.jpg` from Calibre/local folders.
   - **Google Books Integration:** Fallback API support for fetching missing covers and correcting metadata.
@@ -82,23 +83,12 @@ The project includes built-in automation to help with testing, cleanup, and docu
     npm install
     ```
 
-2. **LM Studio Configuration**
+2. **AI Engine Configuration**
 
-    - Ensure LM Studio is running
-    - Start the "Local Server" on port `1234`
-    - Load an appropriate model for your GPU
-    - **Set context window to at least 6144 tokens** (Settings → Context Length)
-      - The AI scan sends ~5000 characters + system prompt
-      - If you get "cannot truncate prompt" errors, increase context window or reduce `MAX_CONTENT_CHARS` in `src/server/tagger.js`
-
-    **Model Recommendations by GPU Memory:**
-
-    - **12GB VRAM** (Tested): Gemma 3 12B - Excellent balance of speed and quality
-    - **16GB+ VRAM**: Llama 3.1 8B Instruct (GGUF Q6_K or higher) or Gemma 3 12B
-    - **8GB VRAM**: Llama 3.2 3B or Phi-3 Mini (4B)
-    - **6GB VRAM**: Gemma 2 2B or TinyLlama 1.1B
-
-    > **Note:** The system works with any OpenAI-compatible local LLM. Larger models produce better tags and summaries but process slower.
+    - Create a `models/` folder in the project root.
+    - Place a `.gguf` model file there.
+    - **Recommended Model:** `Llama-3.2-3B-Instruct-Q4_K_M.gguf`.
+    - **Note:** The system will automatically detect the model. It attempts to load with **8192 context**, falling back to 4096 or 2048 if VRAM is insufficient.
 
 3. **Start Development Environment**
 

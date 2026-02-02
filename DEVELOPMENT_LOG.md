@@ -1,5 +1,51 @@
 # Development Log
 
+## v0.7.4 - UI Polishing & Theming (2026-02-01)
+
+### Features Added
+
+- **Light/Dark Mode Toggle**:
+  - Implemented a global theme switcher (Sun/Moon icon).
+  - **Adaptive Contrast**: Refactored the entire UI color system to support high-readability Light Mode (e.g., solid white backgrounds for pills instead of transparent black) while maintaining the premium Dark Mode aesthetic.
+  - **Persistence**: Theme preference is saved to `localStorage`.
+- **Accessibility Improvements**:
+  - Replaced low-contrast transparency effects with solid, distinct colors in Light Mode for critical actions (Search, Scan, Export).
+  - Improved button legibility by switching to bold, pastel-on-white color schemes in Light Mode.
+- **Tech Stack Update**:
+  - Migrated hardcoded Tailwind colors to **CSS Variables** (`--color-background`, `--color-surface`, etc.) in `index.css` for instant, flicker-free theme switching.
+
+## v0.7.3 - Backend Optimization & Robustness (2026-02-01)
+
+### Features Added
+
+- **Architecture Simplification**:
+  - **Removed External LLM Support**: The system now runs exclusively on the embedded `node-llama-cpp` engine, removing potential network/compatibility issues with external servers like LM Studio.
+  - **Auto-Detect GPU**: Switched backend to "Auto-Detect" mode for GPU acceleration, improving compatibility with NVIDIA/CUDA setups.
+- **Smart AI Context**:
+  - **VRAM Fallback System**: Implemented a resilient context loading strategy. The system attempts to load at **8192** tokens. If VRAM is insufficient, it automatically retries at **4096**, then **2048**, preventing server crashes on lower-end hardware.
+  - **UI Indicator**: Added a live "Active Context Size" indicator (e.g., `8192 active ctx`) to the AI status pill in the top bar.
+- **UX Improvements**:
+  - **One-Click Scanning**: Removed the confirmation dialog for the "AI Data Scan" button for faster workflow.
+  - **High-Contrast UI**: Tuned the colors of status indicators for better readability on dark backgrounds.
+
+### Implementation Details
+
+- **Backend**:
+  - Refactored `tagger.js` to internalize the context retry logic and export `getActiveContextSize()`.
+  - Refactored `taxonomy.js` to reuse the optimized `getLlamaManager` from `tagger.js`, eliminating duplicate model loading code.
+  - Updated `/api/health` to expose `ai_context_size`.
+- **Frontend**:
+  - Updated `App.jsx` to consume and display the real-time context size from the health check.
+
+## v0.7.2 - AI Performance Metrics (2026-01-31)
+
+### Features Added
+
+- **Token Tracking**:
+  - Instrumented `tagger.js` to extract `usage.total_tokens` from LM Studio responses.
+  - Updated `index.js` to maintain a cumulative `totalTokens` count and propagate it via SSE.
+  - Added real-time TPS calculation in the Frontend.
+
 ## v0.7.1b - Missing Book Cleaner Fix (2026-01-31)
 
 ### Fixed
@@ -121,12 +167,18 @@
 
 ## v0.5.3 - Search & Filter (2026-01-30)
 
-- Added SQL `LIKE` query support for real-time searching.
-- Implemented Frontend Debouncing to prevent API spam while typing.
-- Added visual "Filter Chips" to show active search context.
+### Features Added
+
+- **Search & Filter**:
+  - Added SQL `LIKE` query support for real-time searching.
+  - Implemented Frontend Debouncing to prevent API spam while typing.
+  - Added visual "Filter Chips" to show active search context.
 
 ## v0.5.2 - Pagination & Scaling (2026-01-30)
 
-- Implemented client-side pagination to render 32,000+ books efficiently.
-- Added "Persistent Scan State" (Headless Mode) to allow long-running scans to survive browser closes.
-- Added "Export Errors" feature.
+### Features Added
+
+- **Pagination & Scaling**:
+  - Implemented client-side pagination to render 32,000+ books efficiently.
+  - Added "Persistent Scan State" (Headless Mode) to allow long-running scans to survive browser closes.
+  - Added "Export Errors" feature.

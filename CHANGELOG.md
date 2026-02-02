@@ -1,5 +1,38 @@
 # Changelog
 
+## [v0.7.4] - 2026-02-01
+
+### Added
+
+- **Light/Dark Mode Toggle**:
+  - Implemented a global theme switcher (Sun/Moon icon).
+  - **Adaptive Contrast**: Refactored the entire UI color system to support high-readability Light Mode.
+- **Accessibility Improvements**:
+  - Improved button legibility and replaced low-contrast transparency effects.
+- **Tech Stack Update**:
+  - Migrated hardcoded Tailwind colors to **CSS Variables**.
+
+## [v0.7.3] - 2026-02-01
+
+### Added
+
+- **Architecture Simplification**:
+  - **Removed External LLM Support**: The system now runs exclusively on the embedded `node-llama-cpp` engine.
+  - **Auto-Detect GPU**: Switched backend to "Auto-Detect" mode for GPU acceleration.
+- **Smart AI Context**:
+  - **VRAM Fallback System**: Automatically retries loading models at 8192, 4096, then 2048 context sizes if VRAM is insufficient.
+  - **UI Indicator**: Added a live "Active Context Size" indicator.
+- **UX Improvements**:
+  - **One-Click Scanning**: Removed confirmation dialog for "AI Data Scan".
+
+## [v0.7.2] - 2026-01-31
+
+### Added
+
+- **AI Performance Metrics**:
+  - Scanning now tracks and displays average **Tokens Per Second** (TPS) during analysis.
+  - Metrics are displayed in the scan button alongside ETA.
+
 ## [v0.7.1b] - 2026-01-31
 
 ### Fixed

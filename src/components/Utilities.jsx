@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 
-export default function Utilities() {
+export default function Utilities({ scanProps }) {
     const [utilities, setUtilities] = useState([]);
     const [selectedUtil, setSelectedUtil] = useState(null);
     const [scanResult, setScanResult] = useState(null);
@@ -8,22 +8,34 @@ export default function Utilities() {
     const [isProcessing, setIsProcessing] = useState(false);
     const [statusMessage, setStatusMessage] = useState('');
 
+    const [selectedIds, setSelectedIds] = useState(new Set());
     const [progress, setProgress] = useState(null); // { processed, total }
 
     useEffect(() => {
+        // Inject the core "Add Books" utility first
+        const coreUtils = [
+            { id: 'add-books', name: 'Add / Scan Books', description: 'Import new ebooks from your local directories.' }
+        ];
+
         fetch('/api/utilities')
             .then(res => res.json())
             .then(data => {
                 if (data.success) {
-                    setUtilities(data.utilities);
+                    setUtilities([...coreUtils, ...data.utilities]);
+                    // Auto-select "Add Books" if nothing selected
+                    if (!selectedUtil) setSelectedUtil(coreUtils[0]);
                 }
             })
-            .catch(err => console.error('Failed to load utilities:', err));
+            .catch(err => {
+                console.error('Failed to load utilities:', err);
+                setUtilities(coreUtils); // Fallback
+            });
     }, []);
 
     const handleScan = async (util) => {
         setIsScanning(true);
         setScanResult(null);
+        setSelectedIds(new Set());
         setProgress(null);
         setStatusMessage('Starting scan...');
 
@@ -50,6 +62,22 @@ export default function Utilities() {
                                 setStatusMessage(`Scanning... ${data.processed} / ${data.total}`);
                             } else if (data.type === 'complete') {
                                 setScanResult(data.result);
+
+                                // Smart default selection
+                                const isSingleSelector = util.id === 'llm-selector' || util.id === 'ai-manager';
+                                if (isSingleSelector) {
+                                    // Select the one that says "ACTIVE"
+                                    const activeItem = data.result.find(item => item.reason && item.reason.includes('ACTIVE'));
+                                    if (activeItem) {
+                                        setSelectedIds(new Set([activeItem.filepath]));
+                                    } else {
+                                        setSelectedIds(new Set());
+                                    }
+                                } else {
+                                    // Default to selecting everything for other tools
+                                    setSelectedIds(new Set(data.result.map(item => item.filepath || item)));
+                                }
+
                                 setStatusMessage(`Scan complete. Found ${data.result.length} items.`);
                                 setIsScanning(false);
                             } else if (data.type === 'error') {
@@ -68,20 +96,40 @@ export default function Utilities() {
         }
     };
 
+    const toggleSelected = (id) => {
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            const isSingleSelector = selectedUtil?.id === 'llm-selector' || selectedUtil?.id === 'ai-manager';
+
+            if (next.has(id)) {
+                // If it's a selector, don't allow deselecting (must have one)
+                if (isSingleSelector) return prev;
+                next.delete(id);
+            } else {
+                if (isSingleSelector) {
+                    next.clear();
+                }
+                next.add(id);
+            }
+            return next;
+        });
+    };
+
     const handleProcess = async (util, items) => {
-        if (!confirm(`Are you sure you want to process ${items.length} items? This action may be irreversible.`)) return;
+        const selectedList = items.filter(item => selectedIds.has(item.filepath || item));
+
+        if (selectedList.length === 0) {
+            alert('Please select at least one item to process.');
+            return;
+        }
+
+        if (!confirm(`Are you sure you want to process ${selectedList.length} items? This action may be irreversible.`)) return;
 
         setIsProcessing(true);
         setStatusMessage('Processing...');
 
         try {
-            // Depending on utility, we might send IDs or Filepaths.
-            // For missing-books, we send filepaths.
-            // We assume the scanResult is an array of objects with a 'filepath' property or just strings.
-            // The utility expects just the list of identifiers to process.
-
-            // Extract what to send based on the scan result data structure
-            const payload = items.map(item => item.filepath || item);
+            const payload = selectedList.map(item => item.filepath || item);
 
             const res = await fetch(`/api/utilities/${util.id}/run`, {
                 method: 'POST',
@@ -94,6 +142,7 @@ export default function Utilities() {
                 setStatusMessage(`Operation complete. Success: ${data.result.success.length}, Failed: ${data.result.failed.length}`);
                 // Clear scan result after successful processing
                 setScanResult(null);
+                setSelectedIds(new Set());
             } else {
                 setStatusMessage(`Error: ${data.error}`);
             }
@@ -132,73 +181,155 @@ export default function Utilities() {
                 {/* Detail View */}
                 <div className="md:col-span-2 pl-2">
                     {selectedUtil ? (
-                        <div className="space-y-6">
-                            <div>
-                                <h3 className="text-xl font-bold text-neutral-100">{selectedUtil.name}</h3>
-                                <p className="text-neutral-400 mt-1">{selectedUtil.description}</p>
-                            </div>
-
-                            {/* Actions */}
-                            <div className="flex gap-3">
-                                {selectedUtil.actions?.find(a => a.type === 'scan') && (
-                                    <button
-                                        onClick={() => handleScan(selectedUtil)}
-                                        disabled={isScanning || isProcessing}
-                                        className="px-5 py-2 bg-primary hover:bg-indigo-500 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
-                                    >
-                                        {isScanning ? 'Scanning...' : 'Start Scan'}
-                                    </button>
-                                )}
-                            </div>
-
-                            {/* Status Output */}
-                            {statusMessage && (
-                                <div className={`p-4 rounded-lg font-mono text-sm ${statusMessage.startsWith('Error') ? 'bg-red-500/10 text-red-400 border border-red-500/20' : 'bg-black/30 text-emerald-400 border border-emerald-500/10'}`}>
-                                    {statusMessage}
-                                    {/* Progress Bar */}
-                                    {isScanning && progress && (
-                                        <div className="mt-2 h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
-                                            <div
-                                                className="h-full bg-emerald-500 transition-all duration-300"
-                                                style={{ width: `${(progress.processed / progress.total) * 100}%` }}
-                                            />
-                                        </div>
-                                    )}
+                        selectedUtil.id === 'add-books' && scanProps ? (
+                            <div className="space-y-6">
+                                <div>
+                                    <h3 className="text-xl font-bold text-neutral-100">{selectedUtil.name}</h3>
+                                    <p className="text-neutral-400 mt-1">{selectedUtil.description}</p>
                                 </div>
-                            )}
-
-                            {/* Scan Results */}
-                            {scanResult && scanResult.length > 0 && (
-                                <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2">
-                                    <div className="flex items-center justify-between">
-                                        <h4 className="font-bold text-amber-400">Issues Found ({scanResult.length})</h4>
+                                <div className="flex flex-col gap-6 bg-black/20 p-6 rounded-xl border border-white/5">
+                                    <div className="flex gap-4">
+                                        <input
+                                            type="text"
+                                            value={scanProps.path}
+                                            onChange={(e) => scanProps.setPath(e.target.value)}
+                                            placeholder="D:\Books"
+                                            className="flex-1 bg-white/50 dark:bg-black/40 border border-black/10 dark:border-white/10 rounded-lg px-4 py-3 text-gray-900 dark:text-neutral-200 focus:ring-2 focus:ring-primary/50 outline-none"
+                                        />
                                         <button
-                                            onClick={() => handleProcess(selectedUtil, scanResult)}
-                                            disabled={isProcessing}
-                                            className="px-4 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/30 rounded-lg text-sm font-medium transition-colors"
+                                            onClick={scanProps.startScan}
+                                            disabled={scanProps.isScanning || !scanProps.path}
+                                            className={`px-6 py-3 rounded-lg font-bold transition-all ${scanProps.isScanning ? 'bg-neutral-800' : 'bg-primary hover:bg-indigo-500 text-white'}`}
                                         >
-                                            {isProcessing ? 'Processing...' : 'Fix All Issues'}
+                                            {scanProps.isScanning ? 'Scanning...' : 'Scan Library'}
                                         </button>
                                     </div>
 
-                                    <div className="max-h-60 overflow-y-auto bg-black/20 rounded-lg border border-white/5 divide-y divide-white/5">
-                                        {scanResult.map((item, idx) => (
-                                            <div key={idx} className="p-3 text-sm flex justify-between gap-4">
-                                                <span className="text-neutral-300 truncate" title={item.filepath}>{item.filepath}</span>
-                                                <span className="text-neutral-500 whitespace-nowrap">{item.reason}</span>
+                                    {/* Stats Grid */}
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="bg-slate-100 dark:bg-black/20 p-4 rounded-lg">
+                                            <div className="text-xs text-secondary uppercase tracking-wider">Found</div>
+                                            <div className="text-2xl font-bold text-gray-900 dark:text-white">{scanProps.stats.found}</div>
+                                        </div>
+                                        <div className="bg-slate-100 dark:bg-black/20 p-4 rounded-lg border-b-2 border-emerald-500/20">
+                                            <div className="text-xs text-secondary uppercase tracking-wider">Added</div>
+                                            <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{scanProps.stats.added}</div>
+                                        </div>
+                                        <div className="bg-slate-100 dark:bg-black/20 p-4 rounded-lg border-b-2 border-cyan-500/20">
+                                            <div className="text-xs text-secondary uppercase tracking-wider">Metadata</div>
+                                            <div className="text-2xl font-bold text-cyan-600 dark:text-cyan-400">
+                                                {scanProps.stats.metadataExtracted}
+                                                {scanProps.stats.metadataFailed > 0 && <span className="text-xs text-red-500 dark:text-red-400/70 ml-2">({scanProps.stats.metadataFailed} fail)</span>}
                                             </div>
-                                        ))}
+                                        </div>
+                                        <div className="bg-slate-100 dark:bg-black/20 p-4 rounded-lg">
+                                            <div className="text-xs text-secondary uppercase tracking-wider">Duplicates</div>
+                                            <div className="text-2xl font-bold text-amber-600 dark:text-amber-400">{scanProps.stats.skipped}</div>
+                                        </div>
                                     </div>
+                                    {scanProps.isScanning && <div className="text-xs font-mono text-secondary truncate">{scanProps.stats.currentFile}</div>}
                                 </div>
-                            )}
-
-                            {scanResult && scanResult.length === 0 && !isScanning && (
-                                <div className="text-center py-8 text-neutral-500 bg-black/20 rounded-lg border border-white/5">
-                                    No issues found. Everything looks good!
+                            </div>
+                        ) : (
+                            <div className="space-y-6">
+                                <div>
+                                    <h3 className="text-xl font-bold text-neutral-100">{selectedUtil.name}</h3>
+                                    <p className="text-neutral-400 mt-1">{selectedUtil.description}</p>
                                 </div>
-                            )}
 
-                        </div>
+                                {/* Actions */}
+                                <div className="flex gap-3">
+                                    {selectedUtil.actions?.map(action => {
+                                        if (action.type === 'scan') {
+                                            return (
+                                                <button
+                                                    key={action.id}
+                                                    onClick={() => handleScan(selectedUtil)}
+                                                    disabled={isScanning || isProcessing}
+                                                    className="px-5 py-2 bg-primary hover:bg-indigo-500 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+                                                >
+                                                    {isScanning ? 'Scanning...' : (action.label || 'Start Scan')}
+                                                </button>
+                                            );
+                                        }
+                                        return null;
+                                    })}
+                                </div>
+
+                                {/* Status Output */}
+                                {statusMessage && (
+                                    <div className={`p-4 rounded-lg font-mono text-sm ${statusMessage.startsWith('Error') ? 'bg-red-500/10 text-red-400 border border-red-500/20' : 'bg-black/30 text-emerald-400 border border-emerald-500/10'}`}>
+                                        {statusMessage}
+                                        {/* Progress Bar */}
+                                        {isScanning && progress && (
+                                            <div className="mt-2 h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
+                                                <div
+                                                    className="h-full bg-emerald-500 transition-all duration-300"
+                                                    style={{ width: `${(progress.processed / progress.total) * 100}%` }}
+                                                />
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* Scan Results */}
+                                {scanResult && scanResult.length > 0 && (
+                                    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2">
+                                        <div className="flex items-center justify-between">
+                                            <h4 className="font-bold text-amber-400">
+                                                {selectedUtil.id === 'llm-selector' || selectedUtil.id === 'ai-manager'
+                                                    ? 'Available Options'
+                                                    : `Items Selected (${selectedIds.size} / ${scanResult.length})`}
+                                            </h4>
+                                            {selectedUtil.actions?.find(a => a.type === 'execute') && (
+                                                <button
+                                                    onClick={() => handleProcess(selectedUtil, scanResult)}
+                                                    disabled={isProcessing}
+                                                    className="px-4 py-1.5 bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/30 rounded-lg text-sm font-medium transition-colors"
+                                                >
+                                                    {isProcessing ? 'Processing...' : (selectedUtil.actions.find(a => a.type === 'execute').label || 'Execute Action')}
+                                                </button>
+                                            )}
+                                        </div>
+
+                                        <div className="max-h-60 overflow-y-auto bg-black/20 rounded-lg border border-white/5 divide-y divide-white/5">
+                                            {scanResult.map((item, idx) => {
+                                                const id = item.filepath || item;
+                                                const isSelected = selectedIds.has(id);
+                                                return (
+                                                    <div
+                                                        key={idx}
+                                                        onClick={() => toggleSelected(id)}
+                                                        className={`p-3 text-sm flex justify-between gap-4 cursor-pointer transition-colors ${isSelected ? 'bg-indigo-500/10' : 'hover:bg-white/5'}`}
+                                                    >
+                                                        <div className="flex items-center gap-3 truncate">
+                                                            <div className={`w-4 h-4 rounded border flex items-center justify-center ${isSelected ? 'bg-indigo-500 border-indigo-500' : 'border-white/20'}`}>
+                                                                {isSelected && <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20"><path d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" /></svg>}
+                                                            </div>
+                                                            <div className="flex flex-col truncate">
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className={`font-medium ${isSelected ? 'text-indigo-200' : 'text-neutral-300'}`}>{item.name || item.filepath}</span>
+                                                                    {item.size && <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-neutral-400 font-mono">{item.size}</span>}
+                                                                </div>
+                                                                {item.name && <span className="text-neutral-500 text-[10px] truncate">{item.filepath}</span>}
+                                                            </div>
+                                                        </div>
+                                                        <span className={`whitespace-nowrap ${item.reason === 'ACTIVE' ? 'text-indigo-400 font-bold' : 'text-neutral-500'}`}>{item.reason}</span>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {scanResult && scanResult.length === 0 && !isScanning && (
+                                    <div className="text-center py-8 text-neutral-500 bg-black/20 rounded-lg border border-white/5">
+                                        No issues found. Everything looks good!
+                                    </div>
+                                )}
+
+                            </div>
+                        )
                     ) : (
                         <div className="h-full flex flex-col items-center justify-center text-neutral-500 space-y-2">
                             <svg className="w-12 h-12 opacity-20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
