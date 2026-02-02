@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import Utilities from './components/Utilities'
+import { playSuccessSound } from './utils/sound'
 
 // Helper for robust SSE parsing
 const processSSEStream = async (response, onData, onError) => {
@@ -340,6 +341,7 @@ function App() {
         } else if (data.type === 'complete') {
           setIsScanning(false)
           setBasicScanComplete(true)
+          playSuccessSound()
           fetchBooks() // Refresh list
         }
       }, (err) => {
@@ -413,6 +415,7 @@ function App() {
         } else if (data.type === 'complete') {
           setIsProcessingContent(false)
           setAiScanComplete(true)
+          playSuccessSound()
           fetchBooks()
         }
       }, (err) => {

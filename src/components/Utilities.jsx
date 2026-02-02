@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { playSuccessSound } from '../utils/sound';
 
 export default function Utilities({ scanProps }) {
     const [utilities, setUtilities] = useState([]);
@@ -62,6 +63,7 @@ export default function Utilities({ scanProps }) {
                                 setStatusMessage(`Scanning... ${data.processed} / ${data.total}`);
                             } else if (data.type === 'complete') {
                                 setScanResult(data.result);
+                                playSuccessSound();
 
                                 // Smart default selection
                                 const isSingleSelector = util.id === 'llm-selector' || util.id === 'ai-manager';
