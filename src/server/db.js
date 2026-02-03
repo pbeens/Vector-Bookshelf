@@ -70,18 +70,48 @@ export function insertBook(filepath) {
  * @param {object} [filters] - { yearStart, yearEnd }
  */
 export function getAllBooks(search, filters = {}) {
-  let query = 'SELECT * FROM books';
+  let query = 'SELECT *, ';
   const params = [];
   const conditions = [];
 
-  // Search (Title, Author, Tags)
+  // 1. Search Logic (Smart Token Matching)
   if (search && search.trim()) {
-    const likeQuery = `%${search.trim()}%`;
-    conditions.push('(title LIKE ? OR author LIKE ? OR tags LIKE ?)');
-    params.push(likeQuery, likeQuery, likeQuery);
+    // A. Tokenize & Normalize
+    // Split by spaces, hyphens, underscores. Filter out empty strings.
+    const rawTokens = search.trim().toLowerCase().split(/[\s\-_]+/);
+    
+    // Stop words to ignore (unless it's the ONLY word)
+    const STOP_WORDS = ['the', 'and', 'or', 'of', 'in', 'on', 'at', 'to', 'for', 'with', 'a', 'an'];
+    let tokens = rawTokens.filter(t => !STOP_WORDS.includes(t) || rawTokens.length === 1);
+    
+    if (tokens.length === 0) tokens = rawTokens; // Fallback if everything was a stop word
+
+    // B. Construct Scoring Query (Rank matches)
+    // We check Title, Author, Tags, MasterTags for EACH token.
+    // Each token match adds +1 to score.
+    const scoreParts = tokens.map(token => {
+      params.push(`%${token}%`, `%${token}%`, `%${token}%`, `%${token}%`);
+      return `(
+        (REPLACE(REPLACE(LOWER(title), '-', ' '), '_', ' ') LIKE ?) + 
+        (REPLACE(REPLACE(LOWER(author), '-', ' '), '_', ' ') LIKE ?) + 
+        (REPLACE(REPLACE(LOWER(tags), '-', ' '), '_', ' ') LIKE ?) + 
+        (REPLACE(REPLACE(LOWER(master_tags), '-', ' '), '_', ' ') LIKE ?)
+      )`;
+    });
+
+    query += `(${scoreParts.join(' + ')}) as match_score FROM books`;
+
+    // C. Adaptive Thresholding
+    // If > 2 tokens, allow N-1 matches (Fuzzy). 
+    // If <= 2 tokens, require matches for ALL tokens (Strict).
+    const threshold = tokens.length > 2 ? tokens.length - 1 : tokens.length;
+    
+    conditions.push(`match_score >= ${threshold}`);
+  } else {
+    query += '0 as match_score FROM books';
   }
 
-  // Year Range
+  // 2. Year Range
   if (filters.yearStart) {
     conditions.push('publication_year >= ?');
     params.push(filters.yearStart);
@@ -91,12 +121,13 @@ export function getAllBooks(search, filters = {}) {
     params.push(filters.yearEnd);
   }
 
-  // Combine conditions
+  // 3. Combine Conditions
   if (conditions.length > 0) {
     query += ' WHERE ' + conditions.join(' AND ');
   }
 
-  query += ' ORDER BY created_at DESC';
+  // 4. Sort by Relevance (Score) then Recency
+  query += ' ORDER BY match_score DESC, created_at DESC';
 
   return db.prepare(query).all(...params);
 }

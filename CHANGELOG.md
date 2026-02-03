@@ -1,5 +1,26 @@
 # Changelog
 
+## [v0.8.0] - 2026-02-02
+
+### Added
+
+- **Interactive Library Graph**:
+  - **A Whole New Way to See Your Library**: Introduced the Force-Directed Graph View. visualize connections between Books, Tags, and Categories in real-time.
+  - **Physics Engine**: Nodes naturally cluster by topic. Drag nodes to rearrange them, or let the auto-optimizer find the perfect layout.
+  - **Smart Filters**: "Hide" specific nodes to declutter the view (Right-Click -> Hide).
+  - **Capture Tools**: Right-click the background to **Save Image** as PNG or **Copy to Clipboard**.
+- **Bulk Export System**:
+  - **List View**: Added a powerful export bar that appears when searching or filtering. Enter a folder path to instantly copy all matching books to a new location.
+- **UX Improvements**:
+  - **Graph Label Controls**: Granular toggles for Category vs Tag labels.
+  - **Popup Stability**: "sticky" hover cards allow you to interact with book details without them vanishing.
+
+### Fixed
+
+- **Graph Power-Up**: Fixed a critical stability issue where background polling caused the graph to refresh/reset constantly.
+- **Physics Calibration**: Corrected startup forces to ensure the graph always centers perfectly on screen (0,0), preventing "off-screen" clumping.
+- **Visual Polish**: Z-Index fixes ensures Category labels always float above Tags.
+
 ## [v0.7.6] - 2026-02-02
 
 ### Added

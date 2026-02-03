@@ -46,7 +46,7 @@ The system operates in **Phases** to ensure performance and data integrity.
 - **Smart Search & Filtering:** Instantly search by Title, Author, or Tag. Filter by Publication Year. Results update in real-time.
 - **Adaptive Categories:** The system "learns" from your tags to create high-level categories (e.g., "Fiction", "Science-Fiction", "History").
 - **Manual Metadata Editing:** Hover over any Title/Author to see a ✎ pencil. Click to edit inline. Edits are **locked** and safe from auto-scans.
-- **Bulk Export:** Filter your library (e.g., "Fiction" + "Neil Gaiman") and export the actual files to a folder of your choice.
+- **Bulk Export:** Filter your library (via List or Graph view) and export the actual files to a folder of your choice. Perfect for creating curated subsets for e-readers.
 - **Author Filtering:** Click any author name to filter the library. Combine multiple authors and tags for precise searches.
 - **Light/Dark Mode:** Toggle seamlessly between a focused Dark Mode for night reading and a crisp Light Mode for high-contrast visibility.
 - **Interactive Hover Summaries:** Hover over any title to see an AI-generated summary tooltip.
@@ -55,6 +55,7 @@ The system operates in **Phases** to ensure performance and data integrity.
 - **Error Reporting:** Built-in "Export Errors" tool generates a text file report of all corrupted or skipped books for easy cleanup.
 - **Real-time Stats:** Live tracking of detected files, added books, metadata extraction, and failures.
 - **Glassmorphism UI:** Modern, premium aesthetic with smooth transitions and stable layouts.
+- **Graph Context Menu:** Right-click the graph background to Save/Copy specific views or Export visible books.
 - **AI Context Indicator:** Live display of the active context size (e.g., "8192 active ctx") to monitor VRAM usage.
 - **Scan Completion Indicators:** Visual feedback (Green/Emerald buttons) when scans finish, with click-to-clear interaction.
 

@@ -1,6 +1,10 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import Utilities from './components/Utilities'
 import { playSuccessSound } from './utils/sound'
+import LibraryGraph from './components/LibraryGraphV3'
+import ErrorBoundary from './components/ErrorBoundary'
+
+const MAX_GRAPH_ITEMS = 1000;
 
 // Helper for robust SSE parsing
 const processSSEStream = async (response, onData, onError) => {
@@ -46,6 +50,7 @@ function App() {
   const [isProcessingContent, setIsProcessingContent] = useState(false)
   const [aiScanComplete, setAiScanComplete] = useState(false)
   const [basicScanComplete, setBasicScanComplete] = useState(false)
+  const [viewMode, setViewMode] = useState('list') // 'list' | 'graph'
   const [stats, setStats] = useState({
     found: 0,
     added: 0,
@@ -100,6 +105,16 @@ function App() {
       return []
     }
   })
+  const graphContainerRef = useRef(null)
+
+  // Auto-scroll to graph when view changes
+  useEffect(() => {
+    if (viewMode === 'graph' && graphContainerRef.current) {
+      setTimeout(() => {
+        graphContainerRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 100);
+    }
+  }, [viewMode])
 
   // Back to Top State
   const [showBackToTop, setShowBackToTop] = useState(false)
@@ -629,6 +644,19 @@ function App() {
     return authorStr.split(/;|&|\s+and\s+/i)
       .map(a => a.trim())
       .filter(a => a)
+
+  }
+
+  const handleOpenFolder = async (filepath) => {
+    try {
+      await fetch('/api/open-folder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filepath })
+      })
+    } catch (error) {
+      console.error('Failed to open folder:', error)
+    }
   }
 
   const copyToClipboard = async (text) => {
@@ -640,7 +668,7 @@ function App() {
   }
 
   // Filter books by active tags AND authors
-  const filteredBooks = books.filter(book => {
+  const filteredBooks = useMemo(() => books.filter(book => {
     let matchesTags = true
     let matchesAuthors = true
 
@@ -661,7 +689,14 @@ function App() {
     }
 
     return matchesTags && matchesAuthors && (!activeYearFilter || book.publication_year === activeYearFilter)
-  })
+  }), [books, activeTagFilters, activeAuthorFilters, activeYearFilter]);
+
+  // Auto-switch back to list if too many items
+  useEffect(() => {
+    if (viewMode === 'graph' && filteredBooks.length > MAX_GRAPH_ITEMS) {
+      setViewMode('list');
+    }
+  }, [filteredBooks.length, viewMode]);
 
 
   // Error Reporting Logic
@@ -841,8 +876,6 @@ function App() {
               scanProps={{
                 path,
                 setPath,
-                startScan,
-                isScanning,
                 startScan,
                 isScanning,
                 stats,
@@ -1184,7 +1217,7 @@ function App() {
 
               {/* Bulk Export Section */}
               {
-                (activeTagFilters.length > 0 || activeAuthorFilters.length > 0 || activeYearFilter) && (
+                (activeTagFilters.length > 0 || activeAuthorFilters.length > 0 || activeYearFilter || searchQuery) && (
                   <div className="flex items-center gap-3 p-4 bg-indigo-500/5 border border-indigo-500/10 rounded-xl mt-2 animate-in fade-in slide-in-from-top-2 duration-300">
                     <div className="text-secondary text-sm font-medium whitespace-nowrap">
                       Export {filteredBooks.length} books to:
@@ -1207,349 +1240,392 @@ function App() {
                 )
               }
 
-              {isProcessingContent && <div className="text-xs font-mono text-cyan-500/70 max-w-md truncate">AI Data Scan: {taggingStats.current}</div>}
-              {/* Book List */}
-              <div className="bg-surface border border-black/5 dark:border-white/5 rounded-2xl overflow-visible shadow-sm">
-                <table className="w-full text-left text-sm" style={{ tableLayout: 'fixed' }}>
-                  <thead className="bg-black/5 dark:bg-white/5 text-secondary font-medium">
-                    <tr>
-                      <th className="px-4 py-3 cursor-pointer hover:text-white transition-colors group" style={{ width: '30%' }} onClick={() => requestSort('title')}>
-                        Title {sortConfig.key === 'title' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
-                      </th>
-                      <th className="px-4 py-3 whitespace-nowrap cursor-pointer hover:text-white transition-colors group" style={{ width: '10%' }} onClick={() => requestSort('author')}>
-                        Author {sortConfig.key === 'author' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
-                      </th>
-                      <th className="px-4 py-3" style={{ width: '35%' }}>Tags</th>
-                      <th className="px-4 py-3 whitespace-nowrap cursor-pointer hover:text-white transition-colors group" style={{ width: '5%' }} onClick={() => requestSort('publication_year')}>
-                        Year {sortConfig.key === 'publication_year' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
-                      </th>
-                      <th className="px-4 py-3 cursor-pointer hover:text-white transition-colors group" style={{ width: '20%' }} onClick={() => requestSort('filepath')}>
-                        File {sortConfig.key === 'filepath' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-black/5 dark:divide-white/5">
-                    {paginatedBooks.map((book) => (
-                      <tr
-                        key={book.id}
-                        className="hover:bg-black/5 dark:hover:bg-white/5 transition-colors group"
-                        onMouseEnter={() => setHoveredRow(book.id)}
-                        onMouseLeave={() => setHoveredRow(null)}
-                      >
-                        <td className="px-4 py-2 font-medium text-gray-900 dark:text-white">
-                          <div className="relative group inline-block flex items-center gap-2">
-                            {editingCell?.id === book.id && editingCell?.field === 'title' ? (
-                              <input
-                                autoFocus
-                                defaultValue={book.title}
-                                className="bg-neutral-800 border border-indigo-500 rounded px-2 py-1 text-white text-sm w-full min-w-[300px]"
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') handleManualUpdate(book.id, 'title', e.target.value);
-                                  if (e.key === 'Escape') setEditingCell(null);
-                                }}
-                                onBlur={(e) => handleManualUpdate(book.id, 'title', e.target.value)}
-                              />
-                            ) : (
-                              <>
-                                <span
-                                  className={`cursor-help border-b border-white/10 group-hover:border-primary/50 transition-colors ${book.summary ? 'border-dotted' : ''}`}
-                                >
-                                  {book.title || <span className="text-neutral-500 italic">Unknown Title</span>}
-                                </span>
+              {/* View Mode Toggle */}
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setViewMode('list')}
+                    className={`px-4 py-2 rounded-lg font-medium transition-colors ${viewMode === 'list' ? 'bg-indigo-600 text-white' : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700'}`}
+                  >
+                    List View
+                  </button>
+                  <button
+                    onClick={() => setViewMode('graph')}
+                    disabled={filteredBooks.length > MAX_GRAPH_ITEMS}
+                    className={`px-4 py-2 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${viewMode === 'graph' ? 'bg-indigo-600 text-white' : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700'}`}
+                    title={filteredBooks.length > MAX_GRAPH_ITEMS ? `Filter list to < ${MAX_GRAPH_ITEMS} items to enable graph` : "Graph View"}
+                  >
+                    Graph View
+                  </button>
+                  {isProcessingContent && <div className="text-xs font-mono text-cyan-500/70 max-w-md truncate">AI Data Scan: {taggingStats.current}</div>}
+                </div>
+              </div>
 
-                                {/* Edit Icon */}
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setEditingCell({ id: book.id, field: 'title' });
-                                  }}
-                                  className="opacity-0 group-hover:opacity-100 text-neutral-500 hover:text-black dark:hover:text-white hover:bg-gray-200 dark:hover:bg-white/10 rounded transition-all px-1"
-                                  title="Edit Title"
-                                >
-                                  ✎
-                                </button>
-                              </>
-                            )}
+              {/* Main Content Area */}
+              {viewMode === 'list' ? (
+                <>
+                  {/* Book List */}
+                  <div className="bg-surface border border-black/5 dark:border-white/5 rounded-2xl overflow-visible shadow-sm">
+                    <table className="w-full text-left text-sm" style={{ tableLayout: 'fixed' }}>
+                      <thead className="bg-black/5 dark:bg-white/5 text-secondary font-medium">
+                        <tr>
+                          <th className="px-4 py-3 cursor-pointer hover:text-white transition-colors group" style={{ width: '30%' }} onClick={() => requestSort('title')}>
+                            Title {sortConfig.key === 'title' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                          </th>
+                          <th className="px-4 py-3 whitespace-nowrap cursor-pointer hover:text-white transition-colors group" style={{ width: '10%' }} onClick={() => requestSort('author')}>
+                            Author {sortConfig.key === 'author' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                          </th>
+                          <th className="px-4 py-3" style={{ width: '35%' }}>Tags</th>
+                          <th className="px-4 py-3 whitespace-nowrap cursor-pointer hover:text-white transition-colors group" style={{ width: '5%' }} onClick={() => requestSort('publication_year')}>
+                            Year {sortConfig.key === 'publication_year' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                          </th>
+                          <th className="px-4 py-3 cursor-pointer hover:text-white transition-colors group" style={{ width: '20%' }} onClick={() => requestSort('filepath')}>
+                            File {sortConfig.key === 'filepath' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-black/5 dark:divide-white/5">
+                        {paginatedBooks.map((book) => (
+                          <tr
+                            key={book.id}
+                            className="hover:bg-black/5 dark:hover:bg-white/5 transition-colors group"
+                            onMouseEnter={() => setHoveredRow(book.id)}
+                            onMouseLeave={() => setHoveredRow(null)}
+                          >
+                            <td className="px-4 py-2 font-medium text-gray-900 dark:text-white">
+                              <div className="relative group inline-block flex items-center gap-2">
+                                {editingCell?.id === book.id && editingCell?.field === 'title' ? (
+                                  <input
+                                    autoFocus
+                                    defaultValue={book.title}
+                                    className="bg-neutral-800 border border-indigo-500 rounded px-2 py-1 text-white text-sm w-full min-w-[300px]"
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') handleManualUpdate(book.id, 'title', e.target.value);
+                                      if (e.key === 'Escape') setEditingCell(null);
+                                    }}
+                                    onBlur={(e) => handleManualUpdate(book.id, 'title', e.target.value)}
+                                  />
+                                ) : (
+                                  <>
+                                    <span
+                                      className={`cursor-help border-b border-white/10 group-hover:border-primary/50 transition-colors ${book.summary ? 'border-dotted' : ''}`}
+                                    >
+                                      {book.title || <span className="text-neutral-500 italic">Unknown Title</span>}
+                                    </span>
 
-                            {/* Continuous Rescan Button */}
-                            {!editingCell && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleSingleScan(book.id, book.filepath);
-                                }}
-                                disabled={scanningBookId !== null}
-                                className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer border ${scanningBookId === book.id
-                                  ? 'bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 border-cyan-500/50 animate-pulse'
-                                  : (book.tags || book.master_tags)
-                                    ? 'opacity-0 group-hover:opacity-100 bg-neutral-500/10 text-neutral-600 dark:text-neutral-400 border-neutral-500/20 hover:bg-neutral-500/20'
-                                    : 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20 hover:bg-indigo-500/20 shadow-[0_0_10px_rgba(99,102,241,0.1)]'
-                                  } disabled:opacity-50`}
-                                title={(book.tags || book.master_tags) ? "Regenerate AI tags and summary" : "Analyze book with AI"}
-                              >
-                                {scanningBookId === book.id
-                                  ? 'SCANNING...'
-                                  : (book.tags || book.master_tags) ? 'RESCAN' : 'SCAN AI'}
-                              </button>
-                            )}
+                                    {/* Edit Icon */}
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setEditingCell({ id: book.id, field: 'title' });
+                                      }}
+                                      className="opacity-0 group-hover:opacity-100 text-neutral-500 hover:text-black dark:hover:text-white hover:bg-gray-200 dark:hover:bg-white/10 rounded transition-all px-1"
+                                      title="Edit Title"
+                                    >
+                                      ✎
+                                    </button>
+                                  </>
+                                )}
 
-                            {/* Property Sync Button */}
-                            {!editingCell && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleMetadataSync(book.id, book.filepath);
-                                }}
-                                disabled={syncingMetadataId !== null}
-                                className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition-all cursor-pointer border ${syncingMetadataId === book.id
-                                  ? 'bg-amber-500/20 text-amber-700 dark:text-amber-300 border-amber-500/50 animate-pulse'
-                                  : 'opacity-0 group-hover:opacity-100 bg-neutral-200 dark:bg-white/5 text-neutral-600 dark:text-neutral-300 border-neutral-300 dark:border-white/10 hover:bg-neutral-300 dark:hover:bg-white/10 hover:text-black dark:hover:text-white'
-                                  } disabled:opacity-50`}
-                                title="Reread properties (Title, Author, Year) from file"
-                              >
-                                {syncingMetadataId === book.id ? 'SYNCING...' : 'SYNC PROP'}
-                              </button>
-                            )}
+                                {/* Continuous Rescan Button */}
+                                {!editingCell && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleSingleScan(book.id, book.filepath);
+                                    }}
+                                    disabled={scanningBookId !== null}
+                                    className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer border ${scanningBookId === book.id
+                                      ? 'bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 border-cyan-500/50 animate-pulse'
+                                      : (book.tags || book.master_tags)
+                                        ? 'opacity-0 group-hover:opacity-100 bg-neutral-500/10 text-neutral-600 dark:text-neutral-400 border-neutral-500/20 hover:bg-neutral-500/20'
+                                        : 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20 hover:bg-indigo-500/20 shadow-[0_0_10px_rgba(99,102,241,0.1)]'
+                                      } disabled:opacity-50`}
+                                    title={(book.tags || book.master_tags) ? "Regenerate AI tags and summary" : "Analyze book with AI"}
+                                  >
+                                    {scanningBookId === book.id
+                                      ? 'SCANNING...'
+                                      : (book.tags || book.master_tags) ? 'RESCAN' : 'SCAN AI'}
+                                  </button>
+                                )}
 
-                            {book.summary ? (
-                              <div className="absolute z-50 hidden group-hover:block bg-surface/95 border border-neutral-200 dark:border-white/10 p-4 rounded-xl shadow-2xl w-80 bottom-full left-0 mb-1 pointer-events-none backdrop-blur-md animate-in fade-in slide-in-from-bottom-2 duration-200">
-                                <div className="text-[10px] text-primary uppercase tracking-[0.2em] mb-2 font-bold">AI Summary</div>
-                                <p className="text-sm leading-relaxed text-neutral-700 dark:text-neutral-300 font-normal">{book.summary}</p>
-                                <div className="absolute top-full left-4 border-8 border-transparent border-t-surface/95"></div>
+                                {/* Property Sync Button */}
+                                {!editingCell && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleMetadataSync(book.id, book.filepath);
+                                    }}
+                                    disabled={syncingMetadataId !== null}
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition-all cursor-pointer border ${syncingMetadataId === book.id
+                                      ? 'bg-amber-500/20 text-amber-700 dark:text-amber-300 border-amber-500/50 animate-pulse'
+                                      : 'opacity-0 group-hover:opacity-100 bg-neutral-200 dark:bg-white/5 text-neutral-600 dark:text-neutral-300 border-neutral-300 dark:border-white/10 hover:bg-neutral-300 dark:hover:bg-white/10 hover:text-black dark:hover:text-white'
+                                      } disabled:opacity-50`}
+                                    title="Reread properties (Title, Author, Year) from file"
+                                  >
+                                    {syncingMetadataId === book.id ? 'SYNCING...' : 'SYNC PROP'}
+                                  </button>
+                                )}
+
+                                {book.summary ? (
+                                  <div className="absolute z-50 hidden group-hover:block bg-surface/95 border border-neutral-200 dark:border-white/10 p-4 rounded-xl shadow-2xl w-80 bottom-full left-0 mb-1 pointer-events-none backdrop-blur-md animate-in fade-in slide-in-from-bottom-2 duration-200">
+                                    <div className="text-[10px] text-primary uppercase tracking-[0.2em] mb-2 font-bold">AI Summary</div>
+                                    <p className="text-sm leading-relaxed text-neutral-700 dark:text-neutral-300 font-normal">{book.summary}</p>
+                                    <div className="absolute top-full left-4 border-8 border-transparent border-t-surface/95"></div>
+                                  </div>
+                                ) : (
+                                  <div className="absolute z-50 hidden group-hover:block bg-surface/95 border border-amber-500/20 p-4 rounded-xl shadow-2xl w-80 bottom-full left-0 mb-1 pointer-events-none group-hover:pointer-events-auto backdrop-blur-md animate-in fade-in slide-in-from-bottom-2 duration-200">
+                                    <div className="text-[10px] text-amber-500 uppercase tracking-[0.2em] mb-2 font-bold flex justify-between items-center">
+                                      <span>No AI Insight</span>
+                                      {scanningBookId === book.id && <span className="animate-pulse text-cyan-400">Scanning...</span>}
+                                    </div>
+                                    <p className="text-sm leading-relaxed text-neutral-600 dark:text-neutral-400 font-normal italic mb-3">
+                                      No AI summary or tags generated yet.
+                                    </p>
+                                    <div className="absolute top-full left-4 border-8 border-transparent border-t-surface/95"></div>
+                                  </div>
+                                )}
                               </div>
-                            ) : (
-                              <div className="absolute z-50 hidden group-hover:block bg-surface/95 border border-amber-500/20 p-4 rounded-xl shadow-2xl w-80 bottom-full left-0 mb-1 pointer-events-none group-hover:pointer-events-auto backdrop-blur-md animate-in fade-in slide-in-from-bottom-2 duration-200">
-                                <div className="text-[10px] text-amber-500 uppercase tracking-[0.2em] mb-2 font-bold flex justify-between items-center">
-                                  <span>No AI Insight</span>
-                                  {scanningBookId === book.id && <span className="animate-pulse text-cyan-400">Scanning...</span>}
-                                </div>
-                                <p className="text-sm leading-relaxed text-neutral-600 dark:text-neutral-400 font-normal italic mb-3">
-                                  No AI summary or tags generated yet.
-                                </p>
-                                <div className="absolute top-full left-4 border-8 border-transparent border-t-surface/95"></div>
-                              </div>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap overflow-hidden truncate" style={{ maxWidth: 0 }} title={book.author}>
-                          <div className="relative group flex items-center gap-2">
-                            {editingCell?.id === book.id && editingCell?.field === 'author' ? (
-                              <input
-                                autoFocus
-                                defaultValue={book.author}
-                                className="bg-neutral-800 border border-indigo-500 rounded px-2 py-1 text-white text-sm w-full"
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') handleManualUpdate(book.id, 'author', e.target.value);
-                                  if (e.key === 'Escape') setEditingCell(null);
-                                }}
-                                onBlur={(e) => handleManualUpdate(book.id, 'author', e.target.value)}
-                              />
-                            ) : (
-                              <>
-                                <div className="flex flex-wrap gap-1 items-center">
-                                  {book.author ? parseAuthors(book.author).map((author, i) => {
-                                    const isActive = activeAuthorFilters.includes(author);
-                                    return (
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap overflow-hidden truncate" style={{ maxWidth: 0 }} title={book.author}>
+                              <div className="relative group flex items-center gap-2">
+                                {editingCell?.id === book.id && editingCell?.field === 'author' ? (
+                                  <input
+                                    autoFocus
+                                    defaultValue={book.author}
+                                    className="bg-neutral-800 border border-indigo-500 rounded px-2 py-1 text-white text-sm w-full"
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') handleManualUpdate(book.id, 'author', e.target.value);
+                                      if (e.key === 'Escape') setEditingCell(null);
+                                    }}
+                                    onBlur={(e) => handleManualUpdate(book.id, 'author', e.target.value)}
+                                  />
+                                ) : (
+                                  <>
+                                    <div className="flex flex-wrap gap-1 items-center">
+                                      {book.author ? parseAuthors(book.author).map((author, i) => {
+                                        const isActive = activeAuthorFilters.includes(author);
+                                        return (
+                                          <button
+                                            key={i}
+                                            onClick={() => handleAuthorClick(author)}
+                                            className={`px-2 py-0.5 rounded-md text-xs font-medium transition-all cursor-pointer border ${isActive
+                                              ? 'bg-emerald-500/30 text-emerald-700 dark:text-emerald-200 border-emerald-500/50'
+                                              : 'bg-black/5 dark:bg-white/5 text-gray-700 dark:text-neutral-300 border-black/5 dark:border-white/10 hover:bg-emerald-500/10 hover:text-emerald-600 dark:hover:text-emerald-300 hover:border-emerald-500/30'
+                                              }`}
+                                          >
+                                            {author}
+                                          </button>
+                                        );
+                                      }) : <span className="text-neutral-600">-</span>}
+
                                       <button
-                                        key={i}
-                                        onClick={() => handleAuthorClick(author)}
-                                        className={`px-2 py-0.5 rounded-md text-xs font-medium transition-all cursor-pointer border ${isActive
-                                          ? 'bg-emerald-500/30 text-emerald-700 dark:text-emerald-200 border-emerald-500/50'
-                                          : 'bg-black/5 dark:bg-white/5 text-gray-700 dark:text-neutral-300 border-black/5 dark:border-white/10 hover:bg-emerald-500/10 hover:text-emerald-600 dark:hover:text-emerald-300 hover:border-emerald-500/30'
-                                          }`}
+                                        onClick={() => setEditingCell({ id: book.id, field: 'author' })}
+                                        className="opacity-0 group-hover:opacity-100 text-neutral-500 hover:text-black dark:hover:text-white hover:bg-gray-200 dark:hover:bg-white/10 rounded transition-all px-1"
+                                        title="Edit Author"
                                       >
-                                        {author}
+                                        ✎
                                       </button>
-                                    );
-                                  }) : <span className="text-neutral-600">-</span>}
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex flex-wrap gap-1">
+                                {/* Categories Rendering */}
+                                {book.master_tags && book.master_tags.split(',').map((tag, i) => {
+                                  const trimmedTag = tag.trim();
+                                  const isActive = activeTagFilters.includes(trimmedTag);
+                                  return (
+                                    <button
+                                      key={`master-${i}`}
+                                      onClick={() => handleTagClick(trimmedTag)}
+                                      className={`px-2 py-0.5 border rounded-full text-[10px] tracking-wider transition-all cursor-pointer ${isActive
+                                        ? 'bg-orange-500 text-white border-orange-600 font-bold'
+                                        : 'bg-orange-500/10 text-orange-700 dark:text-orange-400 border-orange-500/20 hover:bg-orange-500/20'
+                                        }`}
+                                    >
+                                      {trimmedTag}
+                                    </button>
+                                  );
+                                })}
 
-                                  <button
-                                    onClick={() => setEditingCell({ id: book.id, field: 'author' })}
-                                    className="opacity-0 group-hover:opacity-100 text-neutral-500 hover:text-black dark:hover:text-white hover:bg-gray-200 dark:hover:bg-white/10 rounded transition-all px-1"
-                                    title="Edit Author"
-                                  >
-                                    ✎
-                                  </button>
-                                </div>
-                              </>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex flex-wrap gap-1">
-                            {/* Categories Rendering */}
-                            {book.master_tags && book.master_tags.split(',').map((tag, i) => {
-                              const trimmedTag = tag.trim();
-                              const isActive = activeTagFilters.includes(trimmedTag);
-                              return (
-                                <button
-                                  key={`master-${i}`}
-                                  onClick={() => handleTagClick(trimmedTag)}
-                                  className={`px-2 py-0.5 border rounded-full text-[10px] tracking-wider transition-all cursor-pointer ${isActive
-                                    ? 'bg-orange-500 text-white border-orange-600 font-bold'
-                                    : 'bg-orange-500/10 text-orange-700 dark:text-orange-400 border-orange-500/20 hover:bg-orange-500/20'
-                                    }`}
-                                >
-                                  {trimmedTag}
-                                </button>
-                              );
-                            })}
+                                {/* Normal Tags Rendering */}
+                                {book.tags ? book.tags.split(',').map((tag, i) => {
+                                  const trimmedTag = tag.trim();
+                                  const isActive = activeTagFilters.includes(trimmedTag);
+                                  return (
+                                    <button
+                                      key={i}
+                                      onClick={() => handleTagClick(trimmedTag)}
+                                      className={`px-2 py-0.5 border rounded-full text-[10px] tracking-wider transition-all cursor-pointer ${isActive
+                                        ? 'bg-indigo-500/30 text-indigo-300 border-indigo-500/50'
+                                        : 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-500/20'
+                                        }`}
+                                    >
+                                      {trimmedTag}
+                                    </button>
+                                  );
+                                }) : !book.master_tags && <span className="text-neutral-700 italic text-xs">No tags</span>}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-gray-600 dark:text-neutral-400 whitespace-nowrap">
+                              <div className="relative group flex items-center gap-2">
+                                {editingCell?.id === book.id && editingCell?.field === 'publication_year' ? (
+                                  <input
+                                    autoFocus
+                                    defaultValue={book.publication_year}
+                                    type="text"
+                                    pattern="\d*"
+                                    className="bg-neutral-800 border border-indigo-500 rounded px-2 py-1 text-white text-sm w-20 text-center"
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') handleManualUpdate(book.id, 'publication_year', parseInt(e.target.value) || null);
+                                      if (e.key === 'Escape') setEditingCell(null);
+                                    }}
+                                    onBlur={(e) => handleManualUpdate(book.id, 'publication_year', parseInt(e.target.value) || null)}
+                                  />
+                                ) : (
+                                  <>
+                                    {book.publication_year ? (
+                                      <button
+                                        onClick={() => setActiveYearFilter(book.publication_year)}
+                                        className={`hover:text-cyan-300 hover:underline transition-colors ${activeYearFilter === book.publication_year ? 'text-cyan-400 font-bold underline' : ''}`}
+                                        title="Filter by this Year"
+                                      >
+                                        {book.publication_year}
+                                      </button>
+                                    ) : '-'}
 
-                            {/* Normal Tags Rendering */}
-                            {book.tags ? book.tags.split(',').map((tag, i) => {
-                              const trimmedTag = tag.trim();
-                              const isActive = activeTagFilters.includes(trimmedTag);
-                              return (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setEditingCell({ id: book.id, field: 'publication_year' });
+                                      }}
+                                      className="opacity-0 group-hover:opacity-100 text-neutral-500 hover:text-black dark:hover:text-white hover:bg-gray-200 dark:hover:bg-white/10 rounded transition-all px-1"
+                                      title="Edit Year"
+                                    >
+                                      ✎
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-gray-900 dark:text-white font-mono text-[11px] break-words relative group">
+                              <div className="flex items-center gap-2">
                                 <button
-                                  key={i}
-                                  onClick={() => handleTagClick(trimmedTag)}
-                                  className={`px-2 py-0.5 border rounded-full text-[10px] tracking-wider transition-all cursor-pointer ${isActive
-                                    ? 'bg-indigo-500/30 text-indigo-300 border-indigo-500/50'
-                                    : 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-500/20'
-                                    }`}
-                                >
-                                  {trimmedTag}
-                                </button>
-                              );
-                            }) : !book.master_tags && <span className="text-neutral-700 italic text-xs">No tags</span>}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-gray-600 dark:text-neutral-400 whitespace-nowrap">
-                          <div className="relative group flex items-center gap-2">
-                            {editingCell?.id === book.id && editingCell?.field === 'publication_year' ? (
-                              <input
-                                autoFocus
-                                defaultValue={book.publication_year}
-                                type="text"
-                                pattern="\d*"
-                                className="bg-neutral-800 border border-indigo-500 rounded px-2 py-1 text-white text-sm w-20 text-center"
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') handleManualUpdate(book.id, 'publication_year', parseInt(e.target.value) || null);
-                                  if (e.key === 'Escape') setEditingCell(null);
-                                }}
-                                onBlur={(e) => handleManualUpdate(book.id, 'publication_year', parseInt(e.target.value) || null)}
-                              />
-                            ) : (
-                              <>
-                                {book.publication_year ? (
-                                  <button
-                                    onClick={() => setActiveYearFilter(book.publication_year)}
-                                    className={`hover:text-cyan-300 hover:underline transition-colors ${activeYearFilter === book.publication_year ? 'text-cyan-400 font-bold underline' : ''}`}
-                                    title="Filter by this Year"
-                                  >
-                                    {book.publication_year}
-                                  </button>
-                                ) : '-'}
-
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setEditingCell({ id: book.id, field: 'publication_year' });
+                                  onClick={async () => {
+                                    try {
+                                      const response = await fetch('/api/open-folder', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ filepath: book.filepath })
+                                      });
+                                      const data = await response.json();
+                                      if (!response.ok) {
+                                        alert(`Failed to open folder: ${data.error || 'Unknown error'}`);
+                                      }
+                                    } catch (error) {
+                                      alert(`Error: ${error.message}`);
+                                    }
                                   }}
-                                  className="opacity-0 group-hover:opacity-100 text-neutral-500 hover:text-black dark:hover:text-white hover:bg-gray-200 dark:hover:bg-white/10 rounded transition-all px-1"
-                                  title="Edit Year"
+                                  className="hover:text-indigo-400 underline cursor-pointer text-left"
+                                  title={book.filepath}
                                 >
-                                  ✎
+                                  {book.filepath.split(/[\\/]/).pop()}
                                 </button>
-                              </>
-                            )}
+                                <button
+                                  onClick={() => copyToClipboard(book.filepath)}
+                                  className="ml-auto flex-shrink-0 px-2 py-1 bg-gray-200 dark:bg-white/5 hover:bg-gray-300 dark:hover:bg-white/10 rounded text-[10px] text-gray-600 dark:text-secondary hover:text-black dark:hover:text-white transition-all opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto"
+                                  title="Copy full path"
+                                >
+                                  📋
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                        {filteredBooks.length === 0 && books.length > 0 && (
+                          <tr>
+                            <td colSpan={5} className="px-6 py-12 text-center text-secondary">
+                              No books match the selected filters.
+                              <button onClick={clearAllFilters} className="ml-2 text-indigo-400 hover:text-indigo-300 underline">
+                                Clear filters
+                              </button>
+                            </td>
+                          </tr>
+                        )}
+                        {books.length === 0 && (
+                          <tr>
+                            <td colSpan={5} className="px-6 py-12 text-center text-secondary">
+                              No books found. Scan a directory to begin.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+
+                    {/* Pagination Controls */}
+                    {
+                      totalPages > 1 && (
+                        <div className="mt-4 flex items-center justify-between px-4 py-3 bg-white/5 rounded-lg">
+                          <div className="flex items-center gap-4">
+                            <span className="text-sm text-secondary">
+                              Showing {startIndex + 1}-{Math.min(endIndex, filteredBooks.length)} of {filteredBooks.length} books
+                            </span>
+                            <select
+                              value={itemsPerPage}
+                              onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }}
+                              className="px-3 py-1 bg-white/10 border border-white/20 rounded text-sm text-white"
+                            >
+                              <option value={100}>100 per page</option>
+                              <option value={500}>500 per page</option>
+                              <option value={1000}>1000 per page</option>
+                            </select>
                           </div>
-                        </td>
-                        <td className="px-4 py-3 text-gray-900 dark:text-white font-mono text-[11px] break-words relative group">
                           <div className="flex items-center gap-2">
                             <button
-                              onClick={async () => {
-                                try {
-                                  const response = await fetch('/api/open-folder', {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ filepath: book.filepath })
-                                  });
-                                  const data = await response.json();
-                                  if (!response.ok) {
-                                    alert(`Failed to open folder: ${data.error || 'Unknown error'}`);
-                                  }
-                                } catch (error) {
-                                  alert(`Error: ${error.message}`);
-                                }
-                              }}
-                              className="hover:text-indigo-400 underline cursor-pointer text-left"
-                              title={book.filepath}
+                              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                              disabled={currentPage === 1}
+                              className="px-4 py-2 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded text-sm font-medium"
                             >
-                              {book.filepath.split(/[\\/]/).pop()}
+                              Previous
                             </button>
+                            <span className="text-sm text-secondary">
+                              Page {currentPage} of {totalPages}
+                            </span>
                             <button
-                              onClick={() => copyToClipboard(book.filepath)}
-                              className="ml-auto flex-shrink-0 px-2 py-1 bg-gray-200 dark:bg-white/5 hover:bg-gray-300 dark:hover:bg-white/10 rounded text-[10px] text-gray-600 dark:text-secondary hover:text-black dark:hover:text-white transition-all opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto"
-                              title="Copy full path"
+                              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                              disabled={currentPage === totalPages}
+                              className="px-4 py-2 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded text-sm font-medium"
                             >
-                              📋
+                              Next
                             </button>
                           </div>
-                        </td>
-                      </tr>
-                    ))}
-                    {filteredBooks.length === 0 && books.length > 0 && (
-                      <tr>
-                        <td colSpan={5} className="px-6 py-12 text-center text-secondary">
-                          No books match the selected filters.
-                          <button onClick={clearAllFilters} className="ml-2 text-indigo-400 hover:text-indigo-300 underline">
-                            Clear filters
-                          </button>
-                        </td>
-                      </tr>
-                    )}
-                    {books.length === 0 && (
-                      <tr>
-                        <td colSpan={5} className="px-6 py-12 text-center text-secondary">
-                          No books found. Scan a directory to begin.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-
-                {/* Pagination Controls */}
-                {
-                  totalPages > 1 && (
-                    <div className="mt-4 flex items-center justify-between px-4 py-3 bg-white/5 rounded-lg">
-                      <div className="flex items-center gap-4">
-                        <span className="text-sm text-secondary">
-                          Showing {startIndex + 1}-{Math.min(endIndex, filteredBooks.length)} of {filteredBooks.length} books
-                        </span>
-                        <select
-                          value={itemsPerPage}
-                          onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }}
-                          className="px-3 py-1 bg-white/10 border border-white/20 rounded text-sm text-white"
-                        >
-                          <option value={100}>100 per page</option>
-                          <option value={500}>500 per page</option>
-                          <option value={1000}>1000 per page</option>
-                        </select>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                          disabled={currentPage === 1}
-                          className="px-4 py-2 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded text-sm font-medium"
-                        >
-                          Previous
-                        </button>
-                        <span className="text-sm text-secondary">
-                          Page {currentPage} of {totalPages}
-                        </span>
-                        <button
-                          onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                          disabled={currentPage === totalPages}
-                          className="px-4 py-2 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded text-sm font-medium"
-                        >
-                          Next
-                        </button>
-                      </div>
-                    </div>
-                  )
-                }
-              </div >
+                        </div>
+                      )
+                    }
+                  </div >
+                </>
+              ) : (
+                <div className="h-[700px] w-full" ref={graphContainerRef}>
+                  <ErrorBoundary>
+                    <LibraryGraph
+                      books={filteredBooks}
+                      onNodeClick={(book) => {
+                        fetch('/api/open', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ filepath: book.filepath })
+                        }).catch(err => console.error('Failed to open book', err));
+                      }}
+                      searchQuery={searchQuery}
+                      selectedTags={activeTagFilters}
+                      onOpenFolder={handleOpenFolder}
+                    />
+                  </ErrorBoundary>
+                </div>
+              )}
             </>
           )}
         </main>
