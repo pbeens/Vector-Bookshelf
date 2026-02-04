@@ -1,0 +1,60 @@
+{
+    "name": "vector-bookshelf-desktop",
+    "version": "1.0.0",
+    "license": "GPL-3.0-only",
+    "main": "main.js",
+    "author": "Peter",
+    "description": "Local-first AI library manager",
+    "scripts": {
+        "start": "electron .",
+        "pack": "electron-builder --dir",
+        "dist": "electron-builder"
+    },
+    "devDependencies": {
+        "electron": "28.1.0",
+        "electron-builder": "^24.9.1"
+    },
+    "build": {
+        "appId": "com.vectorbookshelf.app",
+        "productName": "Vector Bookshelf",
+        "directories": {
+            "output": "dist"
+        },
+        "win": {
+            "target": "nsis",
+            "icon": "build/icon.ico"
+        },
+        "files": [
+            "main.js",
+            "preload.js",
+            "package.json",
+            "build-info.json",
+            "icon.png"
+        ],
+        "extraResources": [
+            {
+                "from": "../api",
+                "to": "api",
+                "filter": [
+                    "**/*",
+                    "!**/node_modules/**",
+                    "!**/prod_modules/**",
+                    "!**/node_modules/.bin",
+                    "!**/node_modules/electron-rebuild",
+                    "!**/*.md",
+                    "!**/*.log",
+                    "!**/models/*.gguf"
+                ]
+            },
+            {
+                "from": "../api/prod_modules/node_modules",
+                "to": "api/node_modules"
+            },
+            {
+                "from": "../web/dist",
+                "to": "web/dist"
+            }
+        ],
+        "asar": true
+    }
+}

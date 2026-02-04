@@ -1,0 +1,27 @@
+{
+  "name": "vector-bookshelf-api",
+  "version": "1.0.0",
+  "license": "GPL-3.0-only",
+  "type": "module",
+  "main": "src/server/index.js",
+  "scripts": {
+    "dev": "nodemon src/server/index.js",
+    "start": "node src/server/index.js",
+    "rebuild": "electron-rebuild -v 28.1.0"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "cors": "^2.8.5",
+    "csv-parse": "^5.6.0",
+    "d3-force": "^3.0.0",
+    "epub2": "^3.0.2",
+    "express": "^4.21.2",
+    "node-fetch": "^3.3.2",
+    "node-llama-cpp": "^3.4.0",
+    "pdf-parse": "^1.1.1"
+  },
+  "devDependencies": {
+    "electron-rebuild": "^3.2.9",
+    "nodemon": "^3.1.9"
+  }
+}
