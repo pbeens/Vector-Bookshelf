@@ -12,6 +12,8 @@
   --color-primary: #6366f1;
   --color-secondary: #64748b; /* slate-500 */
   --color-text-main: #0f172a; /* slate-900 */
+  --color-text-muted: #475569; /* slate-600 */
+  --color-surface-overlay: rgba(255, 255, 255, 0.95);
 }
 
 /* Dark Mode Overrides */
@@ -22,6 +24,8 @@
   --color-primary: #818cf8;     /* indigo-400 */
   --color-secondary: #94a3b8;   /* slate-400 */
   --color-text-main: #f8fafc;   /* slate-50 */
+  --color-text-muted: #cbd5e1;  /* slate-300 */
+  --color-surface-overlay: rgba(23, 23, 23, 0.95);
 }
 
 @theme {

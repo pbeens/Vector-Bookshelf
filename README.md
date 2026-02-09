@@ -52,6 +52,33 @@ If you prefer to build the application yourself:
 
 5. **Run:** The installer will be generated in `apps/desktop/dist/`.
 
+### 🚀 Running the Development Version
+
+To run the application in development mode:
+
+1. **Terminal 1: Start Backend API**
+
+    ```powershell
+    cd apps/api
+    npm start
+    ```
+
+2. **Terminal 2: Start Frontend (Vite)**
+
+    ```powershell
+    cd apps/web
+    npm run dev
+    ```
+
+3. **Terminal 3: Start Desktop (Electron Host)**
+
+    ```powershell
+    cd apps/desktop
+    npm start
+    ```
+
+*Note: You can also use the integrated slash commands if using the Antigravity assistant: `/desktop_dev_run`.*
+
 ## 🛠 Technical Overview
 
 Vector Bookshelf is built with performance and privacy in mind:

@@ -1397,21 +1397,21 @@ function App() {
                                 )}
 
                                 {book.summary ? (
-                                  <div className="absolute z-50 hidden group-hover:block bg-surface/95 border border-neutral-200 dark:border-white/10 p-4 rounded-xl shadow-2xl w-80 bottom-full left-0 mb-1 pointer-events-none backdrop-blur-md animate-in fade-in slide-in-from-bottom-2 duration-200">
+                                  <div className="absolute z-50 hidden group-hover:block bg-[var(--color-surface-overlay)] border border-neutral-200 dark:border-white/10 p-4 rounded-xl shadow-2xl w-80 bottom-full left-0 mb-1 pointer-events-none backdrop-blur-md animate-in fade-in slide-in-from-bottom-2 duration-200">
                                     <div className="text-[10px] text-primary uppercase tracking-[0.2em] mb-2 font-bold">AI Summary</div>
-                                    <p className="text-sm leading-relaxed text-neutral-700 dark:text-neutral-300 font-normal">{book.summary}</p>
-                                    <div className="absolute top-full left-4 border-8 border-transparent border-t-surface/95"></div>
+                                    <p className="text-sm leading-relaxed text-[var(--color-text-main)] font-normal">{book.summary}</p>
+                                    <div className="absolute top-full left-4 border-8 border-transparent border-t-[var(--color-surface-overlay)]"></div>
                                   </div>
                                 ) : (
-                                  <div className="absolute z-50 hidden group-hover:block bg-surface/95 border border-amber-500/20 p-4 rounded-xl shadow-2xl w-80 bottom-full left-0 mb-1 pointer-events-none group-hover:pointer-events-auto backdrop-blur-md animate-in fade-in slide-in-from-bottom-2 duration-200">
+                                  <div className="absolute z-50 hidden group-hover:block bg-[var(--color-surface-overlay)] border border-amber-500/20 p-4 rounded-xl shadow-2xl w-80 bottom-full left-0 mb-1 pointer-events-none group-hover:pointer-events-auto backdrop-blur-md animate-in fade-in slide-in-from-bottom-2 duration-200">
                                     <div className="text-[10px] text-amber-500 uppercase tracking-[0.2em] mb-2 font-bold flex justify-between items-center">
                                       <span>No AI Insight</span>
                                       {scanningBookId === book.id && <span className="animate-pulse text-cyan-400">Scanning...</span>}
                                     </div>
-                                    <p className="text-sm leading-relaxed text-neutral-600 dark:text-neutral-400 font-normal italic mb-3">
+                                    <p className="text-sm leading-relaxed text-[var(--color-text-muted)] font-normal italic mb-3">
                                       No AI summary or tags generated yet.
                                     </p>
-                                    <div className="absolute top-full left-4 border-8 border-transparent border-t-surface/95"></div>
+                                    <div className="absolute top-full left-4 border-8 border-transparent border-t-[var(--color-surface-overlay)]"></div>
                                   </div>
                                 )}
                               </div>

@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-02-08
+
+### Fixed
+
+- Improved AI Summary visibility in Dark Mode by implementing CSS variable-based theming.
+- Fixed tooltip contrast issues where text became hard to read against dark backgrounds.
+
+### Added
+
+- Comprehensive development environment setup instructions in README.
+- Documentation for running individual components (API, Web, Desktop) in dev mode.
+
+---
+
 ## [1.0.0] - 2026-02-04
 
 ### Public Baseline Release
@@ -51,4 +65,5 @@ Vector Bookshelf version 1.0.0 marks the first official public release. This ver
 - **Minor (1.X.0):** New feature additions or substantial enhancements.
 - **Patch (1.0.X):** Bug fixes, reliability improvements, and minor UI refinements.
 
+[1.0.1]: https://github.com/pbeens/Vector-Bookshelf/releases/tag/v1.0.1
 [1.0.0]: https://github.com/pbeens/Vector-Bookshelf/releases/tag/v1.0.0
